@@ -1,4 +1,3 @@
-anthropic>=0.60
 httpx>=0.27
 python-dotenv>=1.0
 pyotp>=2.9

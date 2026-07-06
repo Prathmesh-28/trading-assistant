@@ -1,9 +1,10 @@
 # CLAUDE.md
 
-NSE trading signal tool: deterministic rule engine emits trade ideas → human
-places trades manually (Telegram + React dashboard) → engine monitors live
-stops/targets. Claude Fable 5 is an advisory analyst only. Full code tour in
-ONBOARDING.md — read it before structural changes.
+NSE trading signal tool: 100% deterministic rule engine emits trade ideas →
+human places trades manually (Telegram + React dashboard) → engine monitors
+live stops/targets, trails stops, and reviews exits daily. No LLM anywhere in
+the runtime (owner's explicit requirement — do not reintroduce one). Full code
+tour in ONBOARDING.md — read it before structural changes.
 
 ## Commands
 
@@ -21,8 +22,9 @@ python backtest.py positional RELIANCE --days 730   # needs real Groww creds
 - **Python 3.9 runtime**: pydantic/FastAPI models need `Optional[X]`, not
   `X | None` (annotations-only positions are fine — file has
   `from __future__ import annotations`).
-- The LLM (fable_analyst.py) never triggers/sizes/places trades — it only
-  writes `MarketContext` and cosmetic "why" lines. Keep it that way.
+- **No LLM in the runtime.** MarketContext comes from the deterministic
+  `indicators.market_regime()` classifier (engine's `context_loop`). The owner
+  removed the LLM analyst deliberately — don't add model calls to the bot.
 - All state mutations go through `RecommendEngine.handle_command()` — never
   poke `engine.active`/`engine.pending` from a new surface.
 - backtest.py must keep replaying the real `ORBVWAPStrategy.on_bar` /
@@ -30,7 +32,7 @@ python backtest.py positional RELIANCE --days 730   # needs real Groww creds
 - Backtest conventions: next-bar-open fills, stop-wins-on-ambiguous-bar,
   trailing stops from prior bars only, PnL net of costs.py.
 - Only config.py reads `os.environ`; only groww_adapter.py imports growwapi;
-  only notifier.py talks to Telegram; only fable_analyst.py imports anthropic.
+  only notifier.py talks to Telegram.
 - Everything must fail soft: missing creds/data → degraded mode, never a crash
   in the idea flow.
 - indicators.py is pure functions over plain lists (no numpy), `None` during

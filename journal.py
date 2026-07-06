@@ -94,6 +94,32 @@ class Journal:
             ).fetchall()
         return [dict(zip(self._COLUMNS, r)) for r in rows]
 
+    def load_open(self) -> tuple[list[dict], list[dict]]:
+        """State restore after a restart: (active_rows, todays_pending_rows).
+        ACTIVE positions are always restored (a positional hold survives any
+        number of restarts); SUGGESTED ideas only from today — older untaken
+        ideas are stale, mark them EXPIRED here so they don't resurrect."""
+        today = datetime.now(IST).date().isoformat()
+        with self._lock:
+            active = self._conn.execute(
+                f"SELECT {', '.join(self._COLUMNS)} FROM ideas WHERE status = ?",
+                (Status.ACTIVE.value,),
+            ).fetchall()
+            pending = self._conn.execute(
+                f"SELECT {', '.join(self._COLUMNS)} FROM ideas"
+                " WHERE status = ? AND created_at LIKE ?",
+                (Status.SUGGESTED.value, f"{today}%"),
+            ).fetchall()
+            self._conn.execute(
+                "UPDATE ideas SET status = ?, updated_at = ?"
+                " WHERE status = ? AND created_at NOT LIKE ?",
+                (Status.EXPIRED.value, datetime.now(IST).isoformat(),
+                 Status.SUGGESTED.value, f"{today}%"),
+            )
+            self._conn.commit()
+        return ([dict(zip(self._COLUMNS, r)) for r in active],
+                [dict(zip(self._COLUMNS, r)) for r in pending])
+
     def day_stats(self) -> dict:
         today = datetime.now(IST).date().isoformat()
         with self._lock:

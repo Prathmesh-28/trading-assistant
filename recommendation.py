@@ -41,7 +41,7 @@ class Recommendation:
     qty: int
     confidence: str            # LOW / MEDIUM / HIGH
     reason: str                # rule-based trigger description
-    why: str = ""              # Fable's one-line rationale
+    why: str = ""              # optional extra context line (currently unused)
     status: Status = Status.SUGGESTED
     created_at: datetime = field(default_factory=lambda: datetime.now(IST))
     idea_id: int = field(default_factory=lambda: next(_seq))
@@ -68,6 +68,27 @@ class Recommendation:
         direction = 1 if self.is_long else -1
         ref = self.fill_price or self.entry
         return round((ltp - ref) * self.fill_qty * direction, 2)
+
+    @classmethod
+    def from_journal_row(cls, row: dict) -> "Recommendation":
+        """Rebuild a live Recommendation from a journal row (state restore
+        after an engine restart)."""
+        created = datetime.now(IST)
+        try:
+            created = datetime.fromisoformat(row["created_at"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        rec = cls(
+            symbol=row["symbol"], side=Side(row["side"]), horizon=Horizon(row["horizon"]),
+            entry=row["entry"], stop=row["stop"], target=row["target"], qty=row["qty"],
+            confidence=row.get("confidence") or "—", reason=row.get("reason") or "",
+            why=row.get("why") or "", status=Status(row["status"]),
+        )
+        rec.created_at = created
+        rec.fill_qty = row.get("fill_qty") or 0
+        rec.fill_price = row.get("fill_price") or 0.0
+        rec.exit_price = row.get("exit_price") or 0.0
+        return rec
 
     def to_dict(self, ltp: float | None = None) -> dict:
         """JSON-serializable view for the web dashboard (REST + websocket)."""

@@ -53,15 +53,6 @@ class Settings:
     telegram_token: str = field(default_factory=lambda: _s("TELEGRAM_BOT_TOKEN"))
     telegram_chat_id: str = field(default_factory=lambda: _s("TELEGRAM_CHAT_ID"))
 
-    # Fable analyst (Anthropic). Credentials resolve via ANTHROPIC_API_KEY /
-    # ANTHROPIC_AUTH_TOKEN / `ant auth login` profile — the SDK handles it.
-    fable_model: str = field(default_factory=lambda: _s("FABLE_MODEL", "claude-fable-5"))
-    fable_fallback_model: str = field(
-        default_factory=lambda: _s("FABLE_FALLBACK_MODEL", "claude-opus-4-8")
-    )
-    fable_enabled: bool = field(default_factory=lambda: _b("FABLE_ENABLED", True))
-    fable_refresh_minutes: int = field(default_factory=lambda: _i("FABLE_REFRESH_MINUTES", 15))
-
     # Universe + risk
     watchlist: list = field(
         default_factory=lambda: [

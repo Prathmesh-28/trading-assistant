@@ -70,6 +70,8 @@ class Trade:
     pnl: float             # NET of transaction costs + slippage (see costs.py)
     r_multiple: float      # net pnl per unit of initial risk — size-independent
     costs: float = 0.0     # ₹ round-trip charges + slippage deducted from pnl
+    mfe_r: float = 0.0     # max favorable excursion while held, in R — informs targets
+    mae_r: float = 0.0     # max adverse excursion while held, in R — informs stops
 
 
 def _clean_candles(candles: list[dict], label: str, warnings: list[str]) -> list[dict]:
@@ -185,11 +187,27 @@ class BacktestResult:
         for b in by_exit.values():
             b["win_rate_pct"] = round(100 * b.pop("wins") / b["count"], 1)
 
+        mfe_winners = [t.mfe_r for t in wins]
+        mae_winners = [t.mae_r for t in wins]
+        mfe_losers = [t.mfe_r for t in losses]
+        excursion = {
+            # how far winners ran vs the target you took: >1.5 avg MFE with a
+            # 2R target means targets are roughly right; much higher → trail more
+            "winners_avg_mfe_r": round(statistics.mean(mfe_winners), 2) if mfe_winners else None,
+            # how deep winners went against you before working: informs whether
+            # the stop could be tighter without killing winners
+            "winners_avg_mae_r": round(statistics.mean(mae_winners), 2) if mae_winners else None,
+            # losers that showed profit first — a tighter target/faster trail
+            # would have saved some of these
+            "losers_avg_mfe_r": round(statistics.mean(mfe_losers), 2) if mfe_losers else None,
+        }
+
         return {
             "strategy": self.strategy,
             "n_trades": n,
             "win_rate_pct": win_rate,
             "profit_factor": profit_factor,
+            "excursion": excursion,
             "avg_r_multiple": round(statistics.mean(r_values), 2) if r_values else 0.0,
             "stdev_r": round(statistics.pstdev(r_values), 2) if len(r_values) > 1 else 0.0,
             "total_pnl": total_pnl,
@@ -247,7 +265,7 @@ def backtest_intraday(feed, settings: Settings, symbols: list[str], days: int) -
     result = BacktestResult(strategy="intraday_orb_vwap", starting_capital=settings.capital)
     capital = settings.capital
     strat = ORBVWAPStrategy(settings)
-    ctx = MarketContext()  # no historical Fable regime available — rules only
+    ctx = MarketContext()  # neutral context — per-symbol gates still apply
 
     for symbol in symbols:
         intraday = _clean_candles(
@@ -309,11 +327,14 @@ def backtest_intraday(feed, settings: Settings, symbols: list[str], days: int) -
             if qty <= 0:
                 continue
             exit_price, exit_reason = signal.entry, "eod_close"
+            best = worst = signal.entry  # excursion tracking while held
             for ts, c in rows[sig_idx + 1:]:
                 if ts.time() >= MARKET_CLOSE:
                     break
                 if c["high"] == c["low"]:
                     continue  # circuit-locked bar: one-sided book, no realistic fill
+                best = max(best, c["high"]) if is_long else min(best, c["low"])
+                worst = min(worst, c["low"]) if is_long else max(worst, c["high"])
                 r = _resolve_exit(is_long, c["open"], c["high"], c["low"], signal.stop, signal.target)
                 if r:
                     exit_price, exit_reason = r
@@ -328,12 +349,15 @@ def backtest_intraday(feed, settings: Settings, symbols: list[str], days: int) -
             costs = round_trip_costs("MIS", signal.entry, exit_price, qty, settings.slippage_pct)
             pnl = round(gross - costs, 2)
             risk = abs(signal.entry - signal.stop) * qty
+            risk_ps = abs(signal.entry - signal.stop)
             capital += pnl
             result.equity_curve.append(capital)
             result.trades.append(Trade(
                 symbol, signal.side, day.isoformat(), signal.entry, signal.stop,
                 signal.target, qty, round(exit_price, 2), exit_reason, pnl,
                 round(pnl / risk, 2) if risk > 0 else 0.0, costs,
+                round(abs(best - signal.entry) / risk_ps, 2) if risk_ps > 0 else 0.0,
+                round(abs(signal.entry - worst) / risk_ps, 2) if risk_ps > 0 else 0.0,
             ))
 
     result.ending_capital = capital
@@ -382,6 +406,7 @@ def backtest_positional(feed, settings: Settings, symbols: list[str], days: int,
 
         in_position = False
         entry = stop = target = initial_risk_per_share = 0.0
+        best = worst = 0.0
         qty = 0
         entry_date = ""
 
@@ -409,6 +434,7 @@ def backtest_positional(feed, settings: Settings, symbols: list[str], days: int,
                 if qty > 0:
                     in_position = True
                     entry_date = candles[t]["date"]
+                    best = worst = entry
                 continue
 
             day = candles[t]
@@ -424,6 +450,9 @@ def backtest_positional(feed, settings: Settings, symbols: list[str], days: int,
                     stop = max(stop, chand)  # long-only trailing stop only ratchets up
 
             circuit_locked = day["high"] == day["low"]  # one-sided book, no realistic fill
+            if not circuit_locked:
+                best = max(best, day["high"])
+                worst = min(worst, day["low"])
             r = None if circuit_locked else _resolve_exit(
                 True, day["open"], day["high"], day["low"], stop, target)
             if r is None and t == len(candles) - 2:
@@ -442,6 +471,8 @@ def backtest_positional(feed, settings: Settings, symbols: list[str], days: int,
                     symbol, Side.BUY, entry_date, entry, stop, target,
                     qty, round(exit_price, 2), exit_reason, pnl,
                     round(pnl / risk, 2) if risk > 0 else 0.0, trade_costs,
+                    round((best - entry) / initial_risk_per_share, 2) if initial_risk_per_share > 0 else 0.0,
+                    round((entry - worst) / initial_risk_per_share, 2) if initial_risk_per_share > 0 else 0.0,
                 ))
                 in_position = False
             t += 1
@@ -454,6 +485,69 @@ def backtest_positional(feed, settings: Settings, symbols: list[str], days: int,
             f"this result (~{MIN_TRUSTWORTHY_TRADES}+ trades is the commonly cited floor)"
         )
     return result
+
+
+# ------------------------------------------------------------ walk-forward
+
+class _SliceFeed:
+    """Read-only feed view over pre-fetched candles, so walk-forward windows
+    replay through the exact same backtest code as a live feed would."""
+
+    synthetic = False
+
+    def __init__(self, candles_by_symbol: dict, index_candles: list[dict] | None = None):
+        self._candles = candles_by_symbol
+        self._index = index_candles or []
+
+    def get_daily_candles(self, symbol: str, days: int = 120) -> list[dict]:
+        if symbol == "__INDEX__":
+            return self._index[-days:]
+        return self._candles.get(symbol, [])[-days:]
+
+    def get_intraday_candles(self, *a, **k) -> list[dict]:
+        return []
+
+
+def walk_forward_positional(feed, settings: Settings, symbols: list[str],
+                            days: int, windows: int = 4,
+                            index_candles: list[dict] | None = None) -> dict:
+    """Split the period into N sequential windows and run the positional
+    backtest independently in each. A strategy you can trust is profitable in
+    MOST windows — one great year hiding three flat ones shows up here.
+    Reports per-window summaries + the consistency rate."""
+    all_candles = {s: feed.get_daily_candles(s, days=days) for s in symbols}
+    usable = {s: c for s, c in all_candles.items() if len(c) >= (MIN_HISTORY + 20) * 2}
+    if not usable:
+        return {"error": "not enough history for even two windows", "windows": []}
+
+    span = min(len(c) for c in usable.values())
+    # each window gets MIN_HISTORY of warmup plus its own test segment
+    seg = (span - MIN_HISTORY) // windows
+    results = []
+    for w in range(windows):
+        end = MIN_HISTORY + (w + 1) * seg
+        start = max(0, MIN_HISTORY + w * seg - MIN_HISTORY)  # include warmup before the segment
+        window_candles = {s: c[start:end] for s, c in usable.items()}
+        idx = index_candles[start:end] if index_candles else None
+        sliced = _SliceFeed(window_candles, idx)
+        res = backtest_positional(sliced, settings, list(usable), days, idx)
+        s = res.summary()
+        results.append({
+            "window": w + 1,
+            "n_trades": s["n_trades"],
+            "total_pnl": s["total_pnl"],
+            "win_rate_pct": s["win_rate_pct"],
+            "profit_factor": s["profit_factor"],
+            "max_drawdown": s["max_drawdown"],
+        })
+    profitable = sum(1 for r in results if r["total_pnl"] > 0 and r["n_trades"] > 0)
+    with_trades = sum(1 for r in results if r["n_trades"] > 0)
+    return {
+        "windows": results,
+        "consistency_rate_pct": round(100 * profitable / with_trades, 0) if with_trades else 0.0,
+        "note": ("consistency below ~75% means the edge is regime-dependent — "
+                 "size smaller and watch the regime gates"),
+    }
 
 
 # -------------------------------------------------------------------- CLI
@@ -478,6 +572,11 @@ def _print_summary(result: BacktestResult) -> None:
             mc = s["monte_carlo"]
             print(f"Sequencing risk: same trades reshuffled 1000× → median max-DD "
                   f"₹{mc['p50_max_dd']:,.0f}, 95th pct ₹{mc['p95_max_dd']:,.0f}")
+        ex = s["excursion"]
+        if ex["winners_avg_mfe_r"] is not None:
+            print(f"Excursions:      winners ran {ex['winners_avg_mfe_r']}R at best "
+                  f"(dipped {ex['winners_avg_mae_r']}R against you first); "
+                  f"losers peaked at {ex['losers_avg_mfe_r']}R before failing")
         if s["by_exit_reason"]:
             print("Exit attribution:")
             for reason, b in sorted(s["by_exit_reason"].items()):
@@ -504,6 +603,8 @@ def main() -> None:
     p.add_argument("--days", type=int, default=60)
     p.add_argument("--no-index-gate", action="store_true",
                    help="disable the Faber 200-DMA index gate (positional only)")
+    p.add_argument("--walk-forward", type=int, metavar="N", default=0,
+                   help="also split the period into N windows and report per-window consistency (positional only)")
     args = p.parse_args()
 
     settings = Settings()
@@ -524,6 +625,20 @@ def main() -> None:
         result = backtest_positional(feed, settings, [s.upper() for s in args.symbols],
                                      args.days, index_candles)
     _print_summary(result)
+
+    if args.walk_forward and args.strategy == "positional":
+        wf = walk_forward_positional(feed, settings, [s.upper() for s in args.symbols],
+                                     args.days, args.walk_forward, index_candles)
+        print(f"\n=== walk-forward ({args.walk_forward} windows) ===")
+        if "error" in wf:
+            print(f"⚠️  {wf['error']}")
+        else:
+            for w in wf["windows"]:
+                print(f"  window {w['window']}: {w['n_trades']} trades, "
+                      f"PnL ₹{w['total_pnl']:,.2f}, win {w['win_rate_pct']}%, "
+                      f"PF {w['profit_factor']}, maxDD ₹{w['max_drawdown']:,.2f}")
+            print(f"Consistency: {wf['consistency_rate_pct']:.0f}% of windows profitable")
+            print(f"({wf['note']})")
 
 
 if __name__ == "__main__":

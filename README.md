@@ -1,12 +1,12 @@
-# Trading Assistant — Groww + Fable 5
+# Trading Assistant — personal NSE trading bot (you place the trades)
 
 Generates **intraday** and **positional ("normal"/delivery)** trade ideas for
-NSE equities. Ideas reach you two ways: **Telegram** (reply from your phone)
-and a **live web dashboard** (buy/sell with a tap, watch positions update in
-real time). A deterministic, rule-based core makes the calls; **Claude
-Fable 5** runs alongside as an analyst (regime, directional bias, watchlist,
-news flags, and a one-line rationale on every idea). The LLM never pulls the
-trigger and never places an order.
+NSE equities, monitors your open positions live, trails stops, and tells you
+**what to sell, when, and why**. Ideas reach you two ways: **Telegram** (reply
+from your phone) and a **live web dashboard** (buy/sell with a tap, live
+charts, watch positions update in real time). Everything is **100%
+deterministic rules** — no LLM, no ML in the loop — so every signal is
+backtestable and explainable. The bot never places an order; you do.
 
 ## Two modes
 - **recommend** (default) — `recommend_engine.py` / `server.py`. Ideas are
@@ -15,27 +15,34 @@ trigger and never places an order.
 - **execute** (optional) — `orchestrator.py`. The app auto-places orders
   (`LIVE=false` is a dry run). Only for when you want full automation.
 
-## Two horizons
-- **Intraday (MIS):** opening-range breakout, VWAP-filtered, on live 5-min bars;
-  reminds you to square off before the close.
-- **Positional (CNC):** EMA trend + fresh crossover with ATR/Chandelier stops,
-  scanned on **daily candles** from Groww history; ideas are meant to be held
-  days–weeks.
+## Strategies
+- **Intraday (MIS):** opening-range breakout (SSRN 4729284 rules) with
+  Gap-and-Go variant on >2% gap days, VWAP + Supertrend + RVOL filters, on
+  live 5-min bars; square-off reminder before close.
+- **Positional (CNC):** evidence-ranked cascade on daily candles — EMA20/50
+  cross, Donchian-55 breakout, Connors RSI(2) mean-reversion, RSI dip-buy,
+  Golden Cross, MACD — plus a **monthly 12-1 momentum rotation** across the
+  watchlist. Held days–weeks with Chandelier-trailed stops.
+- **Gates before any entry:** a deterministic per-symbol regime classifier
+  (no longs in bear/high-volatility tape), the Faber 200-DMA index gate, and
+  portfolio heat caps (max positions + total open risk).
 
-## Why the LLM sits beside the strategy, not inside it
-An entry/exit trigger must be fast, deterministic, and backtestable. So Fable
-runs on a timer (pre-market once, then a regime/news refresh every ~15 min) and
-writes into a shared `MarketContext` that the rules read as a filter. If the API
-is slow or down, the engine keeps working on neutral defaults.
+## Exit intelligence (which stock to sell, when)
+The bot watches every position you confirm and pushes: stop/target hits,
+"approaching stop — get ready", break-even locks at +1R (stop auto-moves to
+entry), profit give-back warnings, daily Chandelier stop trails ("raise your
+stop to ₹X"), thesis-broken alerts (trend structure reversed), stagnant-trade
+time stops, and a 15:10 hold/tighten/exit review of every open positional —
+each with the reason spelled out.
 
 ## Architecture
 ```
-Groww API ── quotes (5-min bars) ─► ORBVWAPStrategy ┐
-          └─ daily candles ───────► Positional scan ┤
-                                                     ├─► enrich (size + Fable "why") ─┬─► Telegram ─► your phone
-   FableAnalyst (Fable 5) ──► MarketContext ─────────┘        │                       └─► EventBus ─► WebSocket ─► web dashboard
-     • pre-market plan  • regime refresh  • news flags         └─► monitor stops/targets ─► follow-up alerts
-                                                                    Journal (SQLite/Postgres) records every idea/outcome
+Groww API ── quotes (5-min bars) ─► ORBVWAPStrategy (ORB / Gap-and-Go / squeeze) ┐
+          └─ daily candles ──┬────► Positional cascade + 12-1 rotation           ├─► size + heat caps ─┬─► Telegram ─► your phone
+                             └────► market_regime() ─► MarketContext (filter) ───┘         │           └─► EventBus ─► WebSocket ─► dashboard
+                                                                                           └─► monitor + trail + exit reviews ─► sell alerts
+                                                                                               Journal (SQLite) records every idea/outcome;
+                                                                                               state restored from it after any restart
 ```
 
 `server.py` wraps the exact same `RecommendEngine` used by the Telegram
@@ -53,7 +60,6 @@ came from your phone via Telegram or a tap in the browser, goes through
 | `orchestrator.py` | Optional auto-execution entrypoint |
 | `strategy.py` | Intraday ORB+VWAP, `MarketContext`, bar aggregation |
 | `positional.py` | Daily-candle swing strategy + scanner |
-| `fable_analyst.py` | Fable 5 layer (structured outputs + narration) |
 | `notifier.py` | Telegram push + `/status` `/pause` `/resume` |
 | `events.py` | Tiny pub/sub so the dashboard gets a live feed of engine activity |
 | `recommendation.py` | The idea object + phone/dashboard-friendly formatting |
@@ -168,7 +174,5 @@ backtest before trusting a strategy, and only ever risk capital you can lose.
   feed.subscribe_live_data(GrowwAPI.SEGMENT_CASH, "RELIANCE")
   ltp = feed.get_stocks_ltp("RELIANCE", timeout=3)
   ```
-- Wire `news_brief.txt` / a headlines feed into the Fable pre-market and news
-  passes.
 - Run `backtest.py` on real Groww historical data before trusting either
   strategy with real money.

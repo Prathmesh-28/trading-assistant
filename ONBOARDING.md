@@ -9,23 +9,22 @@ Invariants and Gotchas sections handy.
 
 ## 1. The one-paragraph mental model
 
-A deterministic rule engine watches NSE stocks through the Groww API and emits
-**trade ideas** (entry / stop / target / qty). A human receives each idea on
-their phone (Telegram and/or the React dashboard), places the trade manually in
+A **fully deterministic** rule engine (no LLM anywhere — an explicit design
+requirement) watches NSE stocks through the Groww API and emits **trade
+ideas** (entry / stop / target / qty). A human receives each idea on their
+phone (Telegram and/or the React dashboard), places the trade manually in
 their broker app, and tells the engine (`/bought`, `/sold`). The engine then
-monitors the live price and alerts the human when the stop or target is
-touched. Claude (Fable 5) runs **beside** the rules as an analyst — it
-classifies the session (regime/bias) and writes one-line rationales, but it
-never triggers, sizes, or places anything. A hand-rolled backtester replays
-the *exact same* strategy code against historical data.
+monitors the live price, alerts on stop/target/break-even/give-back, trails
+positional stops daily (Chandelier), and issues a hold/tighten/exit review
+before each close. A hand-rolled backtester replays the *exact same* strategy
+code against historical data.
 
 ```
-Groww API ── quotes (5-min bars) ─► ORBVWAPStrategy ┐
-          └─ daily candles ───────► Positional scan ┤
-                                                     ├─► enrich (size + Fable "why") ─┬─► Telegram ─► phone
-   FableAnalyst (Fable 5) ──► MarketContext ─────────┘        │                       └─► EventBus ─► WebSocket ─► dashboard
-     • pre-market plan  • regime refresh                       └─► monitor stops/targets ─► follow-up alerts
-                                                                    Journal (SQLite) records every idea/outcome
+Groww API ── quotes (5-min bars) ─► ORBVWAPStrategy (ORB / Gap-and-Go / squeeze) ┐
+          └─ daily candles ──┬────► Positional cascade + monthly 12-1 rotation   ├─► size + heat caps ─┬─► Telegram ─► phone
+                             └────► market_regime() ─► MarketContext (filter) ───┘        │            └─► EventBus ─► WS ─► dashboard
+                                                                                          └─► monitor stops/targets/trails ─► exit alerts
+                                                                                              Journal (SQLite) records every idea/outcome
 ```
 
 ## 2. Repository map
@@ -42,12 +41,11 @@ Groww API ── quotes (5-min bars) ─► ORBVWAPStrategy ┐
 | `risk_manager.py` | Per-trade sizing (`suggested_qty`), portfolio heat caps (`portfolio_allows`), execute-mode `KillSwitch`. | config |
 | `costs.py` | Indian transaction-cost model (CNC/MIS: STT, stamp, exchange, GST, DP, brokerage, slippage). | — |
 | `groww_adapter.py` | The only file that touches the Groww SDK. `make_feed()` returns `GrowwAdapter` (real) or `SyntheticFeed` (no creds — random walk for pipeline testing). | config |
-| `fable_analyst.py` | The only file that touches the Anthropic SDK. Produces `MarketContext` + one-line "why". Every method fails soft. | config, strategy |
 | `notifier.py` | The only file that touches Telegram. Push + long-poll command loop. Console fallback when unconfigured. | config |
 | `journal.py` | SQLite audit trail of every idea and outcome. | config, recommendation |
 | `events.py` | 20-line asyncio pub/sub (`EventBus`) connecting the engine to WebSocket clients. | — |
-| `recommend_engine.py` | **The heart.** Wires everything: data loop, Fable loop, positional loop, monitoring, and `handle_command()` — the single mutation path. Entrypoint for Telegram-only use. | everything above |
-| `server.py` | FastAPI wrapper: REST + WebSocket around the same engine. Entrypoint for dashboard use. | recommend_engine, events |
+| `recommend_engine.py` | **The heart.** Wires everything: data loop, context loop (deterministic regime), positional loop, monitoring, exit reviews, state restore, and `handle_command()` — the single mutation path. Entrypoint for Telegram-only use. | everything above |
+| `server.py` | FastAPI wrapper: REST + WebSocket around the same engine, plus read-only `/api/chart/{symbol}` (candles + EMA/VWAP overlays) and `/api/backtest` (async jobs reusing backtest.py verbatim; refused in synthetic mode). | recommend_engine, events, backtest |
 | `orchestrator.py` | Optional execute mode: subclasses the engine, auto-places orders (`LIVE=false` = dry run). | recommend_engine |
 | `backtest.py` | Hand-rolled bar-by-bar backtester replaying the production strategy code. | strategy, positional, costs, risk_manager |
 
@@ -58,8 +56,8 @@ Groww API ── quotes (5-min bars) ─► ORBVWAPStrategy ┐
 | `src/api.ts` | REST client. `VITE_API_URL` / `VITE_WS_URL` env. |
 | `src/useLive.ts` | The WebSocket hook: connects, auto-reconnects (2s), folds `snapshot`/`tick`/`alert` events into React state. |
 | `src/types.ts` | Mirrors the backend's JSON shapes (`Snapshot`, `Idea`, `WsEvent`…). Keep in sync with `recommendation.to_dict()` and `engine.snapshot()`. |
-| `src/App.tsx` | Layout: header, regime card, stat tiles, pending ideas, open positions, history. |
-| `src/components/` | One file per card/tile. `IdeaCard` = pending idea with Bought/Skip; `PositionCard` = open position with live PnL + Sold. |
+| `src/App.tsx` | Broker-style layout: Trade / Backtest / History tabs; desktop = watchlist sidebar + chart + ideas rail, collapses to one column on mobile. |
+| `src/components/` | One file per card/tile. `IdeaCard` = pending idea with Bought/Skip; `PositionCard` = open position with live PnL + Sold; `ChartPanel` = lightweight-charts candles + overlays + idea levels, live-updated from ticks; `Watchlist`, `MarketStatusBadge`, `BacktestPanel`. |
 | `src/index.css`, `src/app.css` | Design tokens (dark default + light) and component styles. No CSS framework. |
 
 ### `reference/`
@@ -70,10 +68,11 @@ See `reference/README.md` for the provenance map.
 
 ## 3. Invariants — do not break these
 
-1. **The LLM never trades.** Fable writes `MarketContext` (regime, bias,
-   avoid-list) and cosmetic "why" lines. Strategies *read* the context as a
-   veto filter (`ctx.allows()`). If you find yourself passing an LLM output
-   into an entry price, stop.
+1. **No LLM in the runtime — at all.** The owner removed the LLM analyst
+   deliberately. `MarketContext` is produced by the deterministic
+   `indicators.market_regime()` classifier in the engine's `context_loop`;
+   strategies *read* it as a veto filter (`ctx.allows()`). Do not add model
+   calls anywhere in the bot.
 2. **Every state mutation goes through `engine.handle_command()`.** Telegram
    and the web UI are two front doors to the same function. That's why they
    can't disagree. New surfaces (CLI, cron, whatever) must call it too —
@@ -82,7 +81,7 @@ See `reference/README.md` for the provenance map.
    skipped by both strategy loops. The positional cascade returns at most one
    signal per symbol per day (first strategy to fire wins).
 4. **Fail open, fail soft.** No Groww creds → synthetic feed. No Telegram →
-   console. No Anthropic → neutral context. Missing history → gates pass.
+   console. Missing history → gates pass, neutral context.
    A dead WebSocket client → dropped events, not a dead engine. Any new
    integration must degrade the same way: the idea flow must survive every
    dependency being down.
@@ -99,7 +98,7 @@ See `reference/README.md` for the provenance map.
 7. **Risk is layered, and every layer can veto:** per-trade sizing
    (`suggested_qty` → 0 kills the idea) → portfolio heat caps
    (`portfolio_allows`) → per-symbol regime gate → index 200-DMA gate →
-   Fable avoid-list → (execute mode only) daily-loss kill switch.
+   manual avoid-list → (execute mode only) daily-loss kill switch.
 8. **`config.py` owns the environment.** Never read `os.environ` elsewhere;
    add a field to `Settings` instead (with a sane default so everything runs
    with an empty `.env`).
@@ -114,8 +113,7 @@ See `reference/README.md` for the provenance map.
    Supertrend + RVOL + eligibility screen (see strategy.py docstring for the
    paper's exact rules). Returns a `Signal` or `None`.
 3. `engine.publish(sig)`: sizes it (`suggested_qty`), checks portfolio heat
-   (`portfolio_allows`), asks Fable for a one-liner (30s timeout, optional),
-   journals it (`Status.SUGGESTED`), pushes to Telegram, emits `alert` +
+   (`portfolio_allows`), journals it (`Status.SUGGESTED`), pushes to Telegram, emits `alert` +
    `snapshot` on the EventBus. The idea now sits in `engine.pending`.
 4. You reply `/bought RELIANCE 16 2947.5` (or tap **Bought** on the dashboard,
    which POSTs `/api/ideas/RELIANCE/buy` — same handler). Idea moves
@@ -153,7 +151,7 @@ Cross ⑤ MACD cross (LOW confidence). Two gates run first: the per-symbol
 regime classifier (no longs in `bear_trend`/`high_volatility`) and the Faber
 index gate (no entries while NIFTYBEES < its 200-DMA).
 
-Both read the shared `MarketContext` from Fable as a final veto.
+Both read the shared `MarketContext` (deterministic regime classifier) as a final veto.
 
 ## 6. Running it locally
 
@@ -221,13 +219,14 @@ journal.py (schema already written); everything else reads through `Journal`.
   Don't expose the backend publicly without adding real auth.
 - **Timezones**: everything internal is IST (`config.IST`). Groww candle
   epochs are UTC — convert at the boundary (see `_compute_daily_stats`).
-- **The synthetic feed has no history**, so positional scanning and
+- **The synthetic feed has no strategy history**, so positional scanning and
   backtesting are skipped/refused in synthetic mode — only the intraday
-  pipeline and the dashboard are testable without creds.
-- **Fable 5 API quirks** (fable_analyst.py): thinking is always on (never send
-  a `thinking` param), no temperature, and refusal stop-reasons are handled
-  via server-side fallback to Opus. Auth failure disables the layer for the
-  run rather than crashing.
+  pipeline and the dashboard are testable without creds. The dashboard's
+  charts DO render in synthetic mode via `get_chart_candles()`, a separate
+  deterministic demo-history path that strategies never read. Synthetic mode
+  also ticks 24/7 (see `data_loop`) so the dashboard is demonstrable
+  off-hours — strategy time gates are unchanged.
+
 - **Engine restarts lose in-memory state** (`pending`/`active` live in RAM;
   only the journal persists). After a restart, re-arm monitoring with
   `/watch SYMBOL QTY PRICE STOP [TARGET]`.

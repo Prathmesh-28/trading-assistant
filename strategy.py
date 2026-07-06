@@ -1,4 +1,4 @@
-"""Intraday engine on 5-minute bars, plus the shared MarketContext Fable writes.
+"""Intraday engine on 5-minute bars, plus the shared MarketContext filter.
 
 Math sourced from the best-evidenced public implementations (see the repo
 survey in the project notes):
@@ -49,6 +49,8 @@ MIN_ATR_PCT = 0.5          # daily ATR must be ≥ 0.5% of price
 STOP_ATR_FRACTION = 0.10   # stop distance = 10% of daily ATR (paper's exact number)
 RVOL_MIN = 1.0
 SQUEEZE_MIN_BARS = 6
+GAP_GO_MIN_PCT = 2.0       # open gap vs prev close for the Gap-and-Go variant
+GAP_GO_RVOL_MIN = 2.0      # gap days need real participation, not just a mark-up open
 
 
 def market_is_open(now: datetime) -> bool:
@@ -86,7 +88,8 @@ def market_phase(now: datetime) -> dict:
 
 @dataclass
 class MarketContext:
-    """Written by FableAnalyst, read by the strategies as a filter."""
+    """Deterministic session context (indicators.market_regime on the index
+    proxy, plus any manual avoid-list) — read by the strategies as a filter."""
     regime: str = "unknown"          # trending / choppy / volatile / unknown
     bias: str = "neutral"            # long / short / neutral
     confidence: str = "LOW"
@@ -110,6 +113,7 @@ class DailyStats:
     atr_daily: float | None = None
     avg_first_bar_vol: float | None = None
     adv_14d: float | None = None
+    prev_close: float | None = None   # yesterday's close, for gap detection
 
     def eligible(self, price: float) -> bool:
         if price < MIN_PRICE:
@@ -189,6 +193,8 @@ class _SymbolState:
         self.or_low: float | None = None
         self.first_bar_up: bool = False
         self.rvol_ok: bool = True
+        self.rvol: float | None = None    # opening-range volume / 14d avg (None = unknown)
+        self.gap_pct: float | None = None  # today's open vs prev close (None = unknown)
         self.squeeze_run = 0     # consecutive bars with squeeze on
         self.fired = False
 
@@ -237,9 +243,13 @@ class ORBVWAPStrategy:
             st.first_bar_up = first.close > first.open
             or_vol = sum(b.volume for b in st.bars)
             if daily.avg_first_bar_vol and or_vol > 0:
-                st.rvol_ok = (or_vol / daily.avg_first_bar_vol) > RVOL_MIN
-            log.info("%s OR %.2f/%.2f first_up=%s rvol_ok=%s",
-                     symbol, st.or_high, st.or_low, st.first_bar_up, st.rvol_ok)
+                st.rvol = or_vol / daily.avg_first_bar_vol
+                st.rvol_ok = st.rvol > RVOL_MIN
+            if daily.prev_close:
+                st.gap_pct = (first.open - daily.prev_close) / daily.prev_close * 100.0
+            log.info("%s OR %.2f/%.2f first_up=%s rvol_ok=%s gap=%s",
+                     symbol, st.or_high, st.or_low, st.first_bar_up, st.rvol_ok,
+                     f"{st.gap_pct:+.1f}%" if st.gap_pct is not None else "n/a")
         if st.fired or st.or_high is None or n <= self._orb_bars:
             return None
         if bar.start.astimezone(IST).time() >= LAST_ENTRY:
@@ -277,6 +287,14 @@ class ORBVWAPStrategy:
                 return max(st.or_low, entry - dist)  # type: ignore[arg-type]
             return min(st.or_high, entry + dist)     # type: ignore[arg-type]
 
+        # Gap-and-Go: the ORB on a true gap day — open gapped >2% above prev
+        # close AND participation is heavy (RVOL>2). Same trigger machinery,
+        # higher-conviction label (the paper's companion setup).
+        gap_go = (
+            st.gap_pct is not None and st.gap_pct >= GAP_GO_MIN_PCT
+            and st.rvol is not None and st.rvol >= GAP_GO_RVOL_MIN
+        )
+
         long_ok = (
             st.first_bar_up and bar.close > st.or_high and bar.close > vwap_v
             and st_dir != -1 and ctx.allows(symbol, Side.BUY)
@@ -287,7 +305,13 @@ class ORBVWAPStrategy:
             risk = entry - stop
             if risk <= 0:
                 return None
-            conf = "HIGH" if ctx.regime == "trending" and ctx.bias == "long" else "MEDIUM"
+            if gap_go:
+                return Signal(symbol, Side.BUY, Horizon.INTRADAY, round(entry, 2),
+                              round(stop, 2), round(entry + self._settings.risk_reward * risk, 2),
+                              "HIGH",
+                              f"Gap-and-Go: +{st.gap_pct:.1f}% gap, RVOL {st.rvol:.1f}x, "
+                              "OR break above VWAP")
+            conf = "HIGH" if ctx.regime in ("trending", "bull_trend") and ctx.bias == "long" else "MEDIUM"
             return Signal(symbol, Side.BUY, Horizon.INTRADAY, round(entry, 2),
                           round(stop, 2), round(entry + self._settings.risk_reward * risk, 2),
                           conf, "ORB breakout above VWAP (RVOL ok, Supertrend up)")
