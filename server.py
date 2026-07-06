@@ -35,10 +35,22 @@ engine = RecommendEngine(settings, event_bus=bus)
 _engine_task: asyncio.Task | None = None
 
 
+def _engine_died(task: asyncio.Task) -> None:
+    """create_task swallows exceptions until awaited — surface them NOW.
+    With per-loop supervision inside engine.run() this should never fire,
+    but if it does, the traceback must land in the server log."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc:
+        log.critical("ENGINE TASK DIED — API is up but no ideas/monitoring!", exc_info=exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _engine_task
     _engine_task = asyncio.create_task(engine.run())
+    _engine_task.add_done_callback(_engine_died)
     log.info("engine started")
     try:
         yield

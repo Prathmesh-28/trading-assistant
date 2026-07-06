@@ -72,6 +72,15 @@ class FableAnalyst:
         )
 
     @staticmethod
+    def _is_auth_failure(e: Exception) -> bool:
+        """The SDK raises AuthenticationError for a BAD key but a plain
+        TypeError('Could not resolve authentication method…') for a MISSING
+        one — both mean the same thing here: turn the layer off."""
+        return isinstance(e, anthropic.AuthenticationError) or (
+            isinstance(e, TypeError) and "authentication" in str(e).lower()
+        )
+
+    @staticmethod
     def _text(response) -> str:
         if response.stop_reason == "refusal":
             return ""
@@ -120,9 +129,9 @@ class FableAnalyst:
                 notes=data["notes"][:200],
                 updated_at=now,
             )
-        except (anthropic.APIError, json.JSONDecodeError, KeyError) as e:
+        except Exception as e:  # noqa: BLE001 — this layer's contract is fail-soft, always
             log.warning("market_context failed (engine continues on defaults): %s", e)
-            if isinstance(e, anthropic.AuthenticationError):
+            if self._is_auth_failure(e):
                 log.warning("Anthropic auth missing — Fable layer disabled for this run")
                 self._disabled = True
             return None
@@ -147,8 +156,10 @@ class FableAnalyst:
             )
             text = self._text(resp).strip()
             return text.splitlines()[0][:160] if text else ""
-        except anthropic.APIError as e:
+        except Exception as e:  # noqa: BLE001 — fail-soft, the idea must still go out
             log.warning("why_line failed: %s", e)
+            if self._is_auth_failure(e):
+                self._disabled = True
             return ""
 
     async def close(self) -> None:

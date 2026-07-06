@@ -447,6 +447,23 @@ class RecommendEngine:
                         await self.publish(sig)
             await asyncio.sleep(1800)
 
+    async def _supervise(self, name: str, factory) -> None:
+        """Run a loop forever, restarting it after unexpected crashes. One sick
+        loop must never take down the others — or close the journal while the
+        web server is still answering requests (the exact failure we shipped
+        once: a leaked exception in fable_loop closed the DB under FastAPI)."""
+        while True:
+            try:
+                await factory()
+                return  # a loop returning normally means shutdown
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — log, alert once, back off, restart
+                log.exception("%s crashed — restarting in 60s", name)
+                self._emit("alert", {"level": "warning",
+                                     "message": f"{name} crashed — restarting in 60s"})
+                await asyncio.sleep(60)
+
     async def run(self) -> None:
         mode = "SYNTHETIC (test)" if getattr(self.feed, "synthetic", False) else "LIVE Groww data"
         await self.notifier.send(
@@ -455,9 +472,13 @@ class RecommendEngine:
             f"Risk/trade: {self.s.risk_per_trade_pct}% of ₹{self.s.capital:,.0f} · "
             f"ideas only, you place the trades. /help for commands."
         )
-        tasks = [self.data_loop(), self.fable_loop(), self.positional_loop()]
+        tasks = [
+            self._supervise("data_loop", self.data_loop),
+            self._supervise("fable_loop", self.fable_loop),
+            self._supervise("positional_loop", self.positional_loop),
+        ]
         if self.notifier.enabled:
-            tasks.append(self.notifier.command_loop())
+            tasks.append(self._supervise("command_loop", self.notifier.command_loop))
         try:
             await asyncio.gather(*tasks)
         finally:
