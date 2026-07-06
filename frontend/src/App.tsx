@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import "./index.css";
 import "./app.css";
-import { api } from "./api";
+import { API_BASE, api } from "./api";
 import { AlertBanner } from "./components/AlertBanner";
 import { HistoryTable } from "./components/HistoryTable";
 import { IdeaCard } from "./components/IdeaCard";
@@ -16,6 +16,13 @@ function App() {
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [pauseBusy, setPauseBusy] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [slowConnect, setSlowConnect] = useState(false);
+
+  useEffect(() => {
+    if (snapshot) return;
+    const t = setTimeout(() => setSlowConnect(true), 6000);
+    return () => clearTimeout(t);
+  }, [snapshot]);
 
   useEffect(() => {
     api.history(100).then((r) => setHistory(r.rows)).catch(() => {});
@@ -44,7 +51,17 @@ function App() {
   if (!snapshot) {
     return (
       <div className="loading-screen">
-        <p>{connected ? "Loading…" : "Connecting to engine…"}</p>
+        <div className="loading-box">
+          <p>{connected ? "Loading…" : "Connecting to engine…"}</p>
+          {slowConnect && (
+            <p className="loading-hint">
+              Can't reach the backend at <code>{API_BASE}</code>.
+              {API_BASE.includes("localhost")
+                ? " This deployed dashboard is pointing at localhost — set the VITE_API_URL (and VITE_WS_URL) environment variables in Vercel to your backend's public URL and redeploy."
+                : " Check that the backend is running and that its CORS_ORIGINS includes this site's URL."}
+            </p>
+          )}
+        </div>
       </div>
     );
   }

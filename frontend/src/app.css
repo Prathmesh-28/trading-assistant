@@ -21,6 +21,21 @@
   min-height: 100svh;
   color: var(--text-secondary);
 }
+.loading-box {
+  text-align: center;
+  padding: 0 24px;
+  max-width: 420px;
+}
+.loading-hint {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.loading-hint code {
+  color: var(--text-secondary);
+  word-break: break-all;
+}
 
 /* ---------- header ---------- */
 
