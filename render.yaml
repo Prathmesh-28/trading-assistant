@@ -1,0 +1,54 @@
+services:
+  - type: web
+    name: trading-assistant-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: CORS_ORIGINS
+        value: http://localhost:5173
+      - key: GROWW_API_KEY
+        sync: false
+      - key: GROWW_API_SECRET
+        sync: false
+      - key: GROWW_TOTP_SECRET
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: FABLE_ENABLED
+        value: "true"
+      - key: FABLE_MODEL
+        value: claude-fable-5
+      - key: FABLE_FALLBACK_MODEL
+        value: claude-opus-4-8
+      - key: FABLE_REFRESH_MINUTES
+        value: "15"
+      - key: WATCHLIST
+        value: RELIANCE,HDFCBANK,ICICIBANK,INFY,TCS,SBIN,TATAMOTORS,LT,AXISBANK,BHARTIARTL
+      - key: CAPITAL
+        value: "100000"
+      - key: RISK_PER_TRADE_PCT
+        value: "0.5"
+      - key: MAX_POSITION_VALUE
+        value: "50000"
+      - key: ALLOW_SHORTS
+        value: "false"
+      - key: POLL_SECONDS
+        value: "20"
+      - key: ORB_MINUTES
+        value: "5"
+      - key: BAR_MINUTES
+        value: "5"
+      - key: RISK_REWARD
+        value: "2.0"
+      - key: JOURNAL_PATH
+        value: journal.db
+      - key: LIVE
+        value: "false"

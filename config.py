@@ -1,0 +1,96 @@
+"""All settings, loaded from .env — no other module reads os.environ directly."""
+
+import os
+from dataclasses import dataclass, field
+from zoneinfo import ZoneInfo
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+IST = ZoneInfo("Asia/Kolkata")
+
+DEFAULT_WATCHLIST = (
+    "RELIANCE,HDFCBANK,ICICIBANK,INFY,TCS,SBIN,TATAMOTORS,LT,AXISBANK,BHARTIARTL"
+)
+
+
+def _s(name: str, default: str = "") -> str:
+    return os.getenv(name, default).strip()
+
+
+def _f(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _i(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _b(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+@dataclass
+class Settings:
+    # Groww (data + optional orders)
+    groww_api_key: str = field(default_factory=lambda: _s("GROWW_API_KEY"))
+    groww_api_secret: str = field(default_factory=lambda: _s("GROWW_API_SECRET"))
+    groww_totp_secret: str = field(default_factory=lambda: _s("GROWW_TOTP_SECRET"))
+
+    # Telegram (phone alerts); blank -> console fallback
+    telegram_token: str = field(default_factory=lambda: _s("TELEGRAM_BOT_TOKEN"))
+    telegram_chat_id: str = field(default_factory=lambda: _s("TELEGRAM_CHAT_ID"))
+
+    # Fable analyst (Anthropic). Credentials resolve via ANTHROPIC_API_KEY /
+    # ANTHROPIC_AUTH_TOKEN / `ant auth login` profile — the SDK handles it.
+    fable_model: str = field(default_factory=lambda: _s("FABLE_MODEL", "claude-fable-5"))
+    fable_fallback_model: str = field(
+        default_factory=lambda: _s("FABLE_FALLBACK_MODEL", "claude-opus-4-8")
+    )
+    fable_enabled: bool = field(default_factory=lambda: _b("FABLE_ENABLED", True))
+    fable_refresh_minutes: int = field(default_factory=lambda: _i("FABLE_REFRESH_MINUTES", 15))
+
+    # Universe + risk
+    watchlist: list = field(
+        default_factory=lambda: [
+            s.strip().upper() for s in _s("WATCHLIST", DEFAULT_WATCHLIST).split(",") if s.strip()
+        ]
+    )
+    capital: float = field(default_factory=lambda: _f("CAPITAL", 100_000.0))
+    risk_per_trade_pct: float = field(default_factory=lambda: _f("RISK_PER_TRADE_PCT", 0.5))
+    max_position_value: float = field(default_factory=lambda: _f("MAX_POSITION_VALUE", 50_000.0))
+    allow_shorts: bool = field(default_factory=lambda: _b("ALLOW_SHORTS", False))
+
+    # Intraday strategy
+    poll_seconds: int = field(default_factory=lambda: _i("POLL_SECONDS", 20))
+    # Paper defaults (SSRN 4729284): OR = first 5-min bar, target = 2R
+    orb_minutes: int = field(default_factory=lambda: _i("ORB_MINUTES", 5))
+    bar_minutes: int = field(default_factory=lambda: _i("BAR_MINUTES", 5))
+    risk_reward: float = field(default_factory=lambda: _f("RISK_REWARD", 2.0))
+
+    # Journal: sqlite file by default; set DATABASE_URL for Postgres (see journal.py)
+    database_url: str = field(default_factory=lambda: _s("DATABASE_URL"))
+    journal_path: str = field(default_factory=lambda: _s("JOURNAL_PATH", "journal.db"))
+
+    # Execute mode only
+    live: bool = field(default_factory=lambda: _b("LIVE", False))
+
+    @property
+    def has_groww(self) -> bool:
+        return bool(self.groww_api_key and self.groww_totp_secret)
+
+    @property
+    def has_telegram(self) -> bool:
+        return bool(self.telegram_token and self.telegram_chat_id)
