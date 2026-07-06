@@ -105,6 +105,21 @@ python recommend_engine.py
 - No Groww creds yet? It falls back to a synthetic feed so you can test the
   pipeline end to end (positional is skipped in that mode).
 
+## Login & demo vs live
+
+The dashboard opens on a **landing page with sign-in**. Default credentials
+(override with `AUTH_USERNAME` / `AUTH_PASSWORD` env vars — do this in
+production): username `prathmesh`, password `trade@2026`. All API routes and
+the WebSocket require the session token; failed logins are rate-limited.
+
+The app runs in one of two clearly-labelled data modes:
+- **DEMO** (yellow badge + banner) — no Groww credentials on the server; all
+  prices are a synthetic random walk so you can try every feature safely.
+  Nothing is a real quote.
+- **LIVE** (green badge) — Groww credentials present; real NSE quotes and
+  history. The landing page shows which mode the engine is in before you even
+  sign in, and also shows when the engine is waking from a free-tier sleep.
+
 ## Run — live web dashboard
 ```bash
 # terminal 1 — backend (wraps the same engine, also runs the Telegram loop if configured)

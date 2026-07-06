@@ -53,6 +53,10 @@ class Settings:
     telegram_token: str = field(default_factory=lambda: _s("TELEGRAM_BOT_TOKEN"))
     telegram_chat_id: str = field(default_factory=lambda: _s("TELEGRAM_CHAT_ID"))
 
+    # Dashboard login (web UI + API). Override in production via env.
+    auth_username: str = field(default_factory=lambda: _s("AUTH_USERNAME", "prathmesh"))
+    auth_password: str = field(default_factory=lambda: _s("AUTH_PASSWORD", "trade@2026"))
+
     # Universe + risk
     watchlist: list = field(
         default_factory=lambda: [

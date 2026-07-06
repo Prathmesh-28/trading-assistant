@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import "./index.css";
 import "./app.css";
-import { API_BASE, api } from "./api";
+import { API_BASE, api, clearToken, getToken } from "./api";
+import { Landing } from "./Landing";
 import { AlertBanner } from "./components/AlertBanner";
 import { BacktestPanel } from "./components/BacktestPanel";
 import { ChartPanel } from "./components/ChartPanel";
@@ -18,6 +19,14 @@ import { useLive } from "./useLive";
 type Tab = "trade" | "backtest" | "history";
 
 function App() {
+  const [authed, setAuthed] = useState(() => Boolean(getToken()));
+  if (!authed) {
+    return <Landing onLogin={() => setAuthed(true)} />;
+  }
+  return <Dashboard onLogout={() => { clearToken(); setAuthed(false); }} />;
+}
+
+function Dashboard({ onLogout }: { onLogout: () => void }) {
   const { snapshot, connected, alerts, dismissAlert, prices, market } = useLive();
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [pauseBusy, setPauseBusy] = useState(false);
@@ -89,13 +98,24 @@ function App() {
             <MarketStatusBadge market={market ?? snapshot.market} />
           </div>
           <div className="header-meta">
-            <span className={`mode-badge ${snapshot.mode === "LIVE" ? "good" : "warning"}`}>{snapshot.mode}</span>
+            <span className={`mode-badge ${snapshot.mode === "LIVE" ? "good" : "warning"}`}>
+              {snapshot.mode === "LIVE" ? "LIVE" : "DEMO"}
+            </span>
             <button className="btn btn-ghost pause-btn" disabled={pauseBusy} onClick={togglePause}>
               {snapshot.paused ? "▶ Resume" : "⏸ Pause"}
+            </button>
+            <button className="btn btn-ghost pause-btn" onClick={onLogout} title="Sign out">
+              ⎋
             </button>
             <span className={`conn-dot ${connected ? "conn-on" : "conn-off"}`} title={connected ? "live" : "reconnecting"} />
           </div>
         </div>
+        {snapshot.mode !== "LIVE" && (
+          <p className="demo-banner">
+            DEMO DATA — synthetic random-walk prices for trying the app. Nothing here is a real
+            market quote. Add Groww credentials on the server to go live.
+          </p>
+        )}
         <nav className="tab-bar">
           {(
             [

@@ -20,6 +20,10 @@ services:
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
+      - key: AUTH_USERNAME
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
       - key: WATCHLIST
         value: RELIANCE,HDFCBANK,ICICIBANK,INFY,TCS,SBIN,TATAMOTORS,LT,AXISBANK,BHARTIARTL
       - key: CAPITAL

@@ -601,3 +601,144 @@
   padding: 6px 8px;
   border-bottom: 1px solid var(--gridline);
 }
+
+/* ---------- landing page ---------- */
+
+.landing {
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+}
+.landing-inner {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.landing-hero {
+  text-align: center;
+}
+.landing-logo {
+  font-size: 40px;
+  margin-bottom: 8px;
+}
+.landing-hero h1 {
+  font-size: 26px;
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+.landing-tag {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin: 0;
+  line-height: 1.5;
+}
+.landing-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.landing-features li {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.landing-features strong {
+  color: var(--text-primary);
+}
+.login-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.login-card h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.login-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.login-card input {
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font-size: 15px;
+}
+.login-error {
+  color: var(--critical);
+  font-size: 13px;
+  margin: 0;
+}
+.btn-primary {
+  background: var(--series-blue);
+  color: #fff;
+}
+.login-btn {
+  padding: 12px;
+  font-size: 15px;
+}
+.engine-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+.engine-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.engine-live .engine-dot { background: var(--good); }
+.engine-demo .engine-dot { background: var(--warning); }
+.engine-waking .engine-dot,
+.engine-checking .engine-dot {
+  background: var(--warning);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.engine-down .engine-dot { background: var(--critical); }
+@keyframes pulse {
+  50% { opacity: 0.3; }
+}
+.landing-foot {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* ---------- demo banner ---------- */
+
+.demo-banner {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 1.4;
+}

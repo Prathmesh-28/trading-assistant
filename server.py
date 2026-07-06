@@ -14,6 +14,8 @@ websocket in real time.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import os
 import time
@@ -22,8 +24,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from backtest import backtest_intraday, backtest_positional
@@ -80,11 +83,74 @@ app.add_middleware(
 )
 
 
+# ------------------------------------------------------------------ auth
+
+# Deterministic session token derived from the credentials: survives server
+# restarts (no session store) and rotates the moment the password changes.
+_SESSION_TOKEN = hmac.new(
+    f"{settings.auth_username}:{settings.auth_password}".encode(),
+    b"trading-assistant-session-v1",
+    hashlib.sha256,
+).hexdigest()
+
+# Paths reachable without a token: health (uptime checks / wake-up pings)
+# and login itself.
+_PUBLIC_PATHS = {"/api/health", "/api/login"}
+
+_failed_logins: dict = {}   # ip -> [timestamps], simple brute-force damper
+_LOCKOUT_ATTEMPTS = 5
+_LOCKOUT_WINDOW = 300.0
+
+
+def _token_ok(token: str) -> bool:
+    return bool(token) and hmac.compare_digest(token, _SESSION_TOKEN)
+
+
+@app.middleware("http")
+async def require_auth(request: Request, call_next):
+    path = request.url.path
+    if not path.startswith("/api") or path in _PUBLIC_PATHS or request.method == "OPTIONS":
+        return await call_next(request)
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header[7:] if auth_header.lower().startswith("bearer ") else ""
+    if not _token_ok(token):
+        return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    return await call_next(request)
+
+
+class LoginBody(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/login")
+async def login(body: LoginBody, request: Request):
+    ip = request.client.host if request.client else "?"
+    now = time.time()
+    recent = [t for t in _failed_logins.get(ip, []) if now - t < _LOCKOUT_WINDOW]
+    if len(recent) >= _LOCKOUT_ATTEMPTS:
+        raise HTTPException(429, "too many attempts — try again in a few minutes")
+    user_ok = hmac.compare_digest(body.username.strip(), settings.auth_username)
+    pass_ok = hmac.compare_digest(body.password, settings.auth_password)
+    if not (user_ok and pass_ok):
+        recent.append(now)
+        _failed_logins[ip] = recent
+        raise HTTPException(401, "wrong username or password")
+    _failed_logins.pop(ip, None)
+    return {
+        "token": _SESSION_TOKEN,
+        "mode": "SYNTHETIC" if getattr(engine.feed, "synthetic", False) else "LIVE",
+    }
+
+
 # ------------------------------------------------------------------ REST API
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True}
+    return {
+        "ok": True,
+        "mode": "SYNTHETIC" if getattr(engine.feed, "synthetic", False) else "LIVE",
+    }
 
 
 @app.get("/api/status")
@@ -304,6 +370,10 @@ async def backtest_status(job_id: str):
 
 @app.websocket("/ws")
 async def ws_live(websocket: WebSocket):
+    # browsers can't set headers on WebSockets — the token rides the query string
+    if not _token_ok(websocket.query_params.get("token", "")):
+        await websocket.close(code=4401, reason="unauthorized")
+        return
     await websocket.accept()
     queue = bus.subscribe()
     try:

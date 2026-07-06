@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { WS_URL } from "./api";
+import { wsUrl } from "./api";
 import type { AlertEvent, MarketStatus, Snapshot, WsEvent } from "./types";
 
 let alertSeq = 0;
@@ -30,7 +30,7 @@ export function useLive() {
     let cancelled = false;
 
     const connect = () => {
-      ws = new WebSocket(WS_URL);
+      ws = new WebSocket(wsUrl());
       ws.onopen = () => setConnected(true);
       ws.onclose = () => {
         setConnected(false);
