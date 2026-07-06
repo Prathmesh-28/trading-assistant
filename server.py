@@ -16,15 +16,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
+import uuid
 from contextlib import asynccontextmanager
-from typing import Optional
+from datetime import datetime, timezone
+from typing import List, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from config import Settings
+from backtest import backtest_intraday, backtest_positional
+from config import IST, Settings
 from events import EventBus
+from indicators import SessionVWAP, ema
 from recommend_engine import RecommendEngine
 
 log = logging.getLogger("server")
@@ -150,6 +155,149 @@ async def pause():
 @app.post("/api/resume")
 async def resume():
     return await _run_command("resume", [])
+
+
+# ------------------------------------------------------------------ chart data
+
+_chart_cache: dict = {}  # (symbol, interval, days) -> (fetched_at, payload)
+
+
+def _fetch_chart(symbol: str, interval: str, days: int) -> dict:
+    """Sync (feed calls block) — run in a thread. Read-only view of the feed;
+    fails soft to an empty candle list like every other feed consumer."""
+    feed = engine.feed
+    synthetic = bool(getattr(feed, "synthetic", False))
+    interval_minutes = 1440 if interval == "1d" else engine.s.bar_minutes
+    try:
+        raw = feed.get_chart_candles(symbol, interval_minutes, days)
+    except Exception as e:  # noqa: BLE001 — chart must fail soft
+        log.warning("chart %s %s failed: %s", symbol, interval, e)
+        raw = []
+
+    candles, overlays = [], {}
+    if interval == "1d":
+        for c in raw:
+            candles.append({"time": c["date"], "open": c["open"], "high": c["high"],
+                            "low": c["low"], "close": c["close"], "volume": c["volume"]})
+        closes = [c["close"] for c in candles]
+        overlays = {
+            "ema20": [round(v, 2) if v is not None else None for v in ema(closes, 20)],
+            "ema50": [round(v, 2) if v is not None else None for v in ema(closes, 50)],
+        }
+    else:
+        vwap_vals: list = []
+        vwap = None
+        last_day = None
+        for c in raw:
+            ts = int(c["ts"] / 1000)
+            day = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(IST).date()
+            if day != last_day:  # VWAP resets each session
+                vwap, last_day = SessionVWAP(), day
+            v = vwap.update(c["high"], c["low"], c["close"], c["volume"])
+            vwap_vals.append(round(v, 2) if v is not None else None)
+            candles.append({"time": ts, "open": c["open"], "high": c["high"],
+                            "low": c["low"], "close": c["close"], "volume": c["volume"]})
+        closes = [c["close"] for c in candles]
+        overlays = {
+            "vwap": vwap_vals,
+            "ema20": [round(v, 2) if v is not None else None for v in ema(closes, 20)],
+        }
+    return {"symbol": symbol, "interval": interval, "synthetic": synthetic,
+            "candles": candles, "overlays": overlays}
+
+
+@app.get("/api/chart/{symbol}")
+async def chart(symbol: str, interval: str = "5m", days: int = 5):
+    symbol = symbol.upper()
+    if interval not in ("5m", "1d"):
+        raise HTTPException(400, "interval must be 5m or 1d")
+    days = max(1, min(days, 10 if interval == "5m" else 400))
+    key = (symbol, interval, days)
+    ttl = 30 if interval == "5m" else 120
+    hit = _chart_cache.get(key)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    payload = await asyncio.to_thread(_fetch_chart, symbol, interval, days)
+    _chart_cache[key] = (time.time(), payload)
+    return payload
+
+
+# ------------------------------------------------------------------ backtests
+
+class BacktestBody(BaseModel):
+    strategy: str = "positional"           # "intraday" | "positional"
+    symbols: Optional[List[str]] = None    # default: the engine watchlist
+    days: int = 365
+    use_index_gate: bool = True            # Faber 200-DMA gate (positional)
+
+
+_backtests: dict = {}                      # job_id -> {status, ..., result?}
+_backtest_lock = asyncio.Lock()            # one at a time — Groww rate limits
+
+
+def _run_backtest_sync(strategy: str, symbols: list, days: int, use_gate: bool) -> dict:
+    """Reuses the production backtester verbatim (same on_bar/scan_symbol paths)."""
+    feed, s = engine.feed, engine.s
+    if strategy == "intraday":
+        result = backtest_intraday(feed, s, symbols, days)
+    else:
+        index_candles = None
+        if use_gate:
+            index_candles = feed.get_daily_candles(s.index_symbol, days=days + 320)
+        result = backtest_positional(feed, s, symbols, days, index_candles or None)
+    return {
+        "summary": result.summary(),
+        "equity_curve": result.equity_curve,
+        "trades": [{
+            "symbol": t.symbol, "side": t.side.value, "entry_date": t.entry_date,
+            "entry": t.entry, "stop": t.stop, "target": t.target, "qty": t.qty,
+            "exit": t.exit, "exit_reason": t.exit_reason, "pnl": t.pnl,
+            "r_multiple": t.r_multiple, "costs": t.costs,
+        } for t in result.trades[-500:]],
+    }
+
+
+async def _backtest_job(job_id: str, strategy: str, symbols: list, days: int, use_gate: bool) -> None:
+    job = _backtests[job_id]
+    try:
+        async with _backtest_lock:
+            job["result"] = await asyncio.to_thread(
+                _run_backtest_sync, strategy, symbols, days, use_gate)
+        job["status"] = "done"
+    except Exception as e:  # noqa: BLE001 — surface the error to the UI, not a 500
+        log.exception("backtest %s failed", job_id)
+        job["status"] = "error"
+        job["message"] = str(e)
+    job["finished_at"] = datetime.now(IST).isoformat()
+
+
+@app.post("/api/backtest")
+async def start_backtest(body: BacktestBody):
+    if getattr(engine.feed, "synthetic", False):
+        return {"job_id": None, "status": "unavailable",
+                "message": "Backtesting needs real Groww historical data — set "
+                           "GROWW_API_KEY / GROWW_TOTP_SECRET in .env and restart."}
+    if body.strategy not in ("intraday", "positional"):
+        raise HTTPException(400, "strategy must be intraday or positional")
+    symbols = [s.strip().upper() for s in (body.symbols or engine.s.watchlist) if s.strip()]
+    if not symbols:
+        raise HTTPException(400, "no symbols")
+    days = max(5, min(body.days, 1500))
+    job_id = uuid.uuid4().hex[:8]
+    _backtests[job_id] = {
+        "job_id": job_id, "status": "running", "strategy": body.strategy,
+        "symbols": symbols, "days": days, "started_at": datetime.now(IST).isoformat(),
+    }
+    asyncio.create_task(_backtest_job(job_id, body.strategy, symbols, days, body.use_index_gate))
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/api/backtest/{job_id}")
+async def backtest_status(job_id: str):
+    job = _backtests.get(job_id)
+    if not job:
+        raise HTTPException(404, "unknown backtest job")
+    return job
 
 
 # ------------------------------------------------------------------ WebSocket

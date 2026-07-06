@@ -18,10 +18,11 @@ import logging
 import math
 import random
 import time
+import zlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
 
-from config import Settings
+from config import IST, Settings
 
 log = logging.getLogger("groww")
 
@@ -129,6 +130,23 @@ class GrowwAdapter:
             log.warning("intraday candles %s failed: %s", symbol, e)
             return []
 
+    def get_chart_candles(self, symbol: str, interval_minutes: int, days: int) -> list[dict]:
+        """Dashboard chart feed. Daily rows carry `date` (ISO str); intraday rows
+        carry `ts` (epoch ms). Same defensive behaviour as the other getters."""
+        if interval_minutes >= CANDLE_INTERVAL_DAY:
+            return self.get_daily_candles(symbol, days=days)
+        return self.get_intraday_candles(symbol, days=days, interval_minutes=interval_minutes)
+
+    def prev_close(self, symbol: str) -> float | None:
+        """Most recent completed session's close (for watchlist change-%)."""
+        try:
+            today = datetime.now(IST).date().isoformat()
+            past = [c for c in self.get_daily_candles(symbol, days=10) if c["date"] < today]
+            return past[-1]["close"] if past else None
+        except Exception as e:  # noqa: BLE001 — quotes must fail soft
+            log.warning("prev_close %s failed: %s", symbol, e)
+            return None
+
     def place_order(self, symbol: str, side: str, qty: int, product: str) -> str | None:
         """Execute mode only. Returns order id or None."""
         try:
@@ -161,10 +179,125 @@ class SyntheticFeed:
         self.synthetic = True
         self._rng = random.Random(seed)
         self._state: dict[str, dict] = {}
+        self._chart_cache: dict[tuple, list] = {}  # deterministic demo history
         for sym in settings.watchlist:
             px = self.BASE_PRICES.get(sym, 1000.0)
             self._state[sym] = {"px": px, "vol": 0.0, "drift": self._rng.uniform(-0.4, 0.6)}
         log.info("SyntheticFeed active (no Groww credentials) — test mode only")
+
+    # -- demo chart history --------------------------------------------------
+    # Deterministic per-symbol random walks so the dashboard's charts render
+    # without creds. Served ONLY via get_chart_candles (cosmetic); the
+    # strategy-facing get_daily_candles/get_intraday_candles still return []
+    # so positional scanning and backtesting stay OFF synthetic data.
+
+    @staticmethod
+    def _seed(symbol: str) -> int:
+        return zlib.crc32(symbol.encode())  # hash() is salted per process
+
+    def _base(self, symbol: str) -> float:
+        return self.BASE_PRICES.get(symbol, 1000.0)
+
+    def _gen_daily(self, symbol: str) -> list[dict]:
+        """~250 completed daily candles ending on the last weekday before today,
+        walked backwards from the base price so the last close == prev_close ==
+        the price the live tick walk starts from."""
+        key = (symbol, "1d", datetime.now(IST).date())
+        if key in self._chart_cache:
+            return self._chart_cache[key]
+        rng = random.Random(self._seed(symbol))
+        d = datetime.now(IST).date() - timedelta(days=1)
+        while d.weekday() >= 5:
+            d -= timedelta(days=1)
+        dates = []
+        for _ in range(250):
+            dates.append(d)
+            d -= timedelta(days=1)
+            while d.weekday() >= 5:
+                d -= timedelta(days=1)
+        dates.reverse()
+        closes = [self._base(symbol)]
+        for _ in range(len(dates) - 1):
+            closes.append(closes[-1] / (1 + rng.gauss(0.0004, 0.012)))
+        closes.reverse()
+        out, prev = [], closes[0]
+        for day, c in zip(dates, closes):
+            hi = max(prev, c) * (1 + abs(rng.gauss(0, 0.004)))
+            lo = min(prev, c) * (1 - abs(rng.gauss(0, 0.004)))
+            out.append({"date": day.isoformat(), "open": round(prev, 2),
+                        "high": round(hi, 2), "low": round(lo, 2), "close": round(c, 2),
+                        "volume": float(int(abs(rng.gauss(2_500_000, 900_000))))})
+            prev = c
+        self._chart_cache[key] = out
+        return out
+
+    def _gen_intraday_past(self, symbol: str, interval_minutes: int, sessions: int) -> list[dict]:
+        """Completed 09:15–15:30 sessions before today, ending at the base price."""
+        key = (symbol, interval_minutes, sessions, datetime.now(IST).date())
+        if key in self._chart_cache:
+            return self._chart_cache[key]
+        rng = random.Random(self._seed(symbol) ^ interval_minutes)
+        days, d = [], datetime.now(IST).date() - timedelta(days=1)
+        while len(days) < sessions:
+            if d.weekday() < 5:
+                days.append(d)
+            d -= timedelta(days=1)
+        days.reverse()
+        per_session = (6 * 60 + 15) // interval_minutes
+        closes = [self._base(symbol)]
+        for _ in range(per_session * len(days) - 1):
+            closes.append(closes[-1] / (1 + rng.gauss(0.00005, 0.0012)))
+        closes.reverse()
+        out, prev, i = [], closes[0], 0
+        for day in days:
+            t0 = datetime.combine(day, dtime(9, 15), tzinfo=IST)
+            for b in range(per_session):
+                c = closes[i]
+                i += 1
+                hi = max(prev, c) * (1 + abs(rng.gauss(0, 0.0008)))
+                lo = min(prev, c) * (1 - abs(rng.gauss(0, 0.0008)))
+                out.append({"ts": (t0 + timedelta(minutes=interval_minutes * b)).timestamp() * 1000,
+                            "open": round(prev, 2), "high": round(hi, 2),
+                            "low": round(lo, 2), "close": round(c, 2),
+                            "volume": float(int(abs(rng.gauss(60_000, 20_000))))})
+                prev = c
+        self._chart_cache[key] = out
+        return out
+
+    def _today_partial(self, symbol: str, interval_minutes: int, prev: float) -> list[dict]:
+        """Today's bars from 09:15 up to the last completed bucket, ending at the
+        CURRENT walked price so live ticks continue the chart seamlessly."""
+        now = datetime.now(IST)
+        start = datetime.combine(now.date(), dtime(9, 15), tzinfo=IST)
+        n = int((now - start).total_seconds() // (interval_minutes * 60))
+        if n <= 0:
+            return []
+        live = self._state.get(symbol, {}).get("px", self._base(symbol))
+        rng = random.Random(self._seed(symbol) ^ 0xDEAD)
+        step = (live / prev) ** (1.0 / n) if prev > 0 else 1.0
+        out = []
+        for b in range(n):
+            c = live if b == n - 1 else prev * step * (1 + rng.gauss(0, 0.0008))
+            hi = max(prev, c) * (1 + abs(rng.gauss(0, 0.0006)))
+            lo = min(prev, c) * (1 - abs(rng.gauss(0, 0.0006)))
+            out.append({"ts": (start + timedelta(minutes=interval_minutes * b)).timestamp() * 1000,
+                        "open": round(prev, 2), "high": round(hi, 2),
+                        "low": round(lo, 2), "close": round(c, 2),
+                        "volume": float(int(abs(rng.gauss(60_000, 20_000))))})
+            prev = c
+        return out
+
+    def get_chart_candles(self, symbol: str, interval_minutes: int, days: int) -> list[dict]:
+        if interval_minutes >= 1440:
+            rows = max(30, int(days * 5 / 7))
+            return self._gen_daily(symbol)[-rows:]
+        sessions = max(1, min(days, 10))
+        past = self._gen_intraday_past(symbol, interval_minutes, sessions)
+        prev = past[-1]["close"] if past else self._base(symbol)
+        return past + self._today_partial(symbol, interval_minutes, prev)
+
+    def prev_close(self, symbol: str) -> float | None:
+        return self._base(symbol)
 
     def get_tick(self, symbol: str) -> Tick | None:
         s = self._state.get(symbol)

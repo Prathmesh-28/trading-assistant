@@ -32,7 +32,7 @@ from recommendation import Horizon, Recommendation, Side, Status
 from risk_manager import portfolio_allows, suggested_qty
 from indicators import atr as atr_indicator
 from strategy import (MARKET_CLOSE, SQUARE_OFF_WARN, DailyStats, MarketContext,
-                      ORBVWAPStrategy, Signal, market_is_open)
+                      ORBVWAPStrategy, Signal, market_is_open, market_phase)
 
 log = logging.getLogger("engine")
 
@@ -58,6 +58,7 @@ class RecommendEngine:
         self.pending: dict[str, tuple[Recommendation, int]] = {}   # symbol -> (rec, row)
         self.active: dict[str, Position] = {}
         self.last_ltp: dict[str, float] = {}
+        self.prev_close: dict[str, float] = {}   # for watchlist change-% (fail open: empty)
         self.paused = False
         self._squareoff_warned = False
         self._session_date = None
@@ -90,8 +91,31 @@ class RecommendEngine:
             "positions": [pos.rec.to_dict(self.last_ltp.get(sym))
                          for sym, pos in self.active.items()],
             "day_stats": self.journal.day_stats(),
+            "market": market_phase(datetime.now(IST)),
+            "quotes": self._quotes(),
             "server_time": datetime.now(IST).isoformat(),
         }
+
+    def _quotes(self) -> dict:
+        """Watchlist quotes for the dashboard: LTP (falls back to prev close
+        when the session hasn't ticked yet) + change-%. All fields may be None."""
+        out = {}
+        for sym in self.s.watchlist:
+            pc = self.prev_close.get(sym)
+            ltp = self.last_ltp.get(sym, pc)
+            chg = round((ltp - pc) / pc * 100, 2) if (ltp and pc) else None
+            out[sym] = {"ltp": ltp, "prev_close": pc, "change_pct": chg}
+        return out
+
+    def _load_prev_closes(self) -> None:
+        """Sync (run in a thread for the real feed). Fail open per symbol."""
+        for sym in self.s.watchlist:
+            try:
+                pc = self.feed.prev_close(sym)
+            except Exception:  # noqa: BLE001 — quotes are cosmetic
+                pc = None
+            if pc:
+                self.prev_close[sym] = pc
 
     # ------------------------------------------------------------- publishing
 
@@ -402,9 +426,14 @@ class RecommendEngine:
             await asyncio.sleep(self.s.fable_refresh_minutes * 60)
 
     async def data_loop(self) -> None:
+        # Synthetic mode ticks 24/7 so the dashboard (charts, watchlist, PnL,
+        # stop/target alerts) is demonstrable outside market hours. Strategy
+        # time gates (LAST_ENTRY etc.) still apply unchanged — this widens
+        # WHEN the demo feed flows, never what the rules do with it.
+        synthetic = getattr(self.feed, "synthetic", False)
         while True:
             now = datetime.now(IST)
-            if market_is_open(now):
+            if market_is_open(now) or synthetic:
                 if self._session_date != now.date():
                     self._session_date = now.date()
                     self.strategy.reset_day()
@@ -412,6 +441,7 @@ class RecommendEngine:
                     log.info("new session %s — computing daily stats", now.date())
                     stats = await asyncio.to_thread(self._compute_daily_stats)
                     self.strategy.set_daily_stats(stats)
+                    await asyncio.to_thread(self._load_prev_closes)
                 for sym in self.s.watchlist:
                     tick = self.feed.get_tick(sym)
                     if not tick:
@@ -423,8 +453,10 @@ class RecommendEngine:
                     if sig:
                         await self.publish(sig)
                 await self.monitor()
-                await self.squareoff_check(now)
+                if market_is_open(now):
+                    await self.squareoff_check(now)
                 self._emit("tick", {"prices": dict(self.last_ltp),
+                                    "market": market_phase(now),
                                     "server_time": now.isoformat()})
                 await asyncio.sleep(self.s.poll_seconds)
             else:
@@ -465,6 +497,10 @@ class RecommendEngine:
                 await asyncio.sleep(60)
 
     async def run(self) -> None:
+        try:
+            await asyncio.to_thread(self._load_prev_closes)  # quotes before first session block
+        except Exception:  # noqa: BLE001 — cosmetic, never block startup
+            log.warning("prev-close preload failed — change-%% shows once the session loads")
         mode = "SYNTHETIC (test)" if getattr(self.feed, "synthetic", False) else "LIVE Groww data"
         await self.notifier.send(
             f"🤖 Trading assistant online — {mode}\n"

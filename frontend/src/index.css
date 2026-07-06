@@ -79,6 +79,13 @@ body {
   background: var(--page);
 }
 
+/* broker-style desktop layout gets the full width */
+@media (min-width: 1024px) {
+  #root {
+    max-width: 1440px;
+  }
+}
+
 button {
   font: inherit;
   cursor: pointer;

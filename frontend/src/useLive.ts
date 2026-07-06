@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { WS_URL } from "./api";
-import type { AlertEvent, Snapshot, WsEvent } from "./types";
+import type { AlertEvent, MarketStatus, Snapshot, WsEvent } from "./types";
 
 let alertSeq = 0;
 
@@ -20,6 +20,8 @@ export function useLive() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [connected, setConnected] = useState(false);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
+  const [prices, setPrices] = useState<Record<string, number>>({});
+  const [market, setMarket] = useState<MarketStatus | null>(null);
   const snapRef = useRef<Snapshot | null>(null);
 
   useEffect(() => {
@@ -40,10 +42,13 @@ export function useLive() {
         if (msg.type === "snapshot") {
           snapRef.current = msg.data;
           setSnapshot(msg.data);
+          setMarket(msg.data.market ?? null);
         } else if (msg.type === "tick" && snapRef.current) {
           const next = applyTick(snapRef.current, msg.data.prices);
           snapRef.current = next;
           setSnapshot(next);
+          setPrices((prev) => ({ ...prev, ...msg.data.prices }));
+          if (msg.data.market) setMarket(msg.data.market);
         } else if (msg.type === "alert") {
           const entry: AlertEvent = { id: ++alertSeq, at: Date.now(), ...msg.data };
           setAlerts((prev) => [...prev, entry]);
@@ -64,5 +69,5 @@ export function useLive() {
 
   const dismissAlert = (id: number) => setAlerts((prev) => prev.filter((a) => a.id !== id));
 
-  return { snapshot, connected, alerts, dismissAlert };
+  return { snapshot, connected, alerts, dismissAlert, prices, market };
 }

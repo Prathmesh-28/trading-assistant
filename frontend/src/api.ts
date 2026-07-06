@@ -1,4 +1,4 @@
-import type { HistoryRow, Snapshot } from "./types";
+import type { BacktestJob, ChartData, HistoryRow, Snapshot } from "./types";
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 export const WS_URL = import.meta.env.VITE_WS_URL ?? API_BASE.replace(/^http/, "ws") + "/ws";
@@ -27,4 +27,9 @@ export const api = {
     }),
   pause: () => req("/api/pause", { method: "POST" }),
   resume: () => req("/api/resume", { method: "POST" }),
+  chart: (symbol: string, interval: "5m" | "1d", days: number) =>
+    req<ChartData>(`/api/chart/${symbol}?interval=${interval}&days=${days}`),
+  startBacktest: (body: { strategy: string; symbols?: string[]; days: number; use_index_gate?: boolean }) =>
+    req<BacktestJob>("/api/backtest", { method: "POST", body: JSON.stringify(body) }),
+  backtestJob: (jobId: string) => req<BacktestJob>(`/api/backtest/${jobId}`),
 };

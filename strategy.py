@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, time as dtime
+from datetime import date, datetime, time as dtime, timedelta
 
 from config import IST, Settings
 from indicators import SessionVWAP, atr, squeeze_momentum, supertrend
@@ -41,6 +41,7 @@ MARKET_OPEN = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
 SQUARE_OFF_WARN = dtime(15, 10)
 LAST_ENTRY = dtime(14, 30)
+PRE_OPEN_START = dtime(9, 0)   # NSE pre-open session 09:00–09:15
 
 MIN_PRICE = 100.0          # ₹ port of the paper's $5 floor
 MIN_ADV = 1_000_000        # 14-day average daily volume, shares
@@ -54,6 +55,33 @@ def market_is_open(now: datetime) -> bool:
     if now.weekday() >= 5:
         return False
     return MARKET_OPEN <= now.time() <= MARKET_CLOSE
+
+
+def _next_weekday(d: date) -> date:
+    d += timedelta(days=1)
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
+def market_phase(now: datetime) -> dict:
+    """NSE session phase for the dashboard header. Weekend-aware but
+    holiday-naive (exchange holidays show as a normal weekday). All
+    timestamps ISO with tz so the client can render live countdowns."""
+    tz = now.tzinfo
+
+    def at(d: date, t: dtime) -> str:
+        return datetime.combine(d, t, tzinfo=tz).isoformat()
+
+    d = now.date()
+    if now.weekday() < 5 and now.time() < MARKET_OPEN:
+        if now.time() >= PRE_OPEN_START:
+            return {"phase": "pre-open", "next_open": at(d, MARKET_OPEN), "next_close": None}
+        return {"phase": "closed", "next_open": at(d, MARKET_OPEN), "next_close": None}
+    if market_is_open(now):
+        return {"phase": "open", "next_open": None, "next_close": at(d, MARKET_CLOSE)}
+    nd = _next_weekday(d)
+    return {"phase": "closed", "next_open": at(nd, MARKET_OPEN), "next_close": None}
 
 
 @dataclass
