@@ -29,7 +29,7 @@ from journal import Journal
 from notifier import Notifier
 from positional import scan as positional_scan
 from recommendation import Horizon, Recommendation, Side, Status
-from risk_manager import suggested_qty
+from risk_manager import portfolio_allows, suggested_qty
 from indicators import atr as atr_indicator
 from strategy import (MARKET_CLOSE, SQUARE_OFF_WARN, DailyStats, MarketContext,
                       ORBVWAPStrategy, Signal, market_is_open)
@@ -95,10 +95,30 @@ class RecommendEngine:
 
     # ------------------------------------------------------------- publishing
 
+    def _open_risk(self) -> float:
+        """₹ entry-to-stop risk across confirmed positions AND pending ideas —
+        pending counts because the user may still take them."""
+        risk = 0.0
+        for pos in self.active.values():
+            r = pos.rec
+            risk += abs((r.fill_price or r.entry) - r.stop) * (r.fill_qty or r.qty)
+        for rec, _ in self.pending.values():
+            risk += abs(rec.entry - rec.stop) * rec.qty
+        return risk
+
     async def publish(self, sig: Signal) -> None:
         qty = suggested_qty(sig.entry, sig.stop, self.s)
         if qty <= 0:
             log.info("%s signal skipped — qty 0 under current risk settings", sig.symbol)
+            return
+        ok, reason = portfolio_allows(
+            len(self.active) + len(self.pending),
+            self._open_risk(),
+            abs(sig.entry - sig.stop) * qty,
+            self.s,
+        )
+        if not ok:
+            log.info("%s signal skipped — %s", sig.symbol, reason)
             return
         rec = Recommendation(
             symbol=sig.symbol, side=sig.side, horizon=sig.horizon,
@@ -419,7 +439,8 @@ class RecommendEngine:
             if self._positional_done != today:
                 self._positional_done = today
                 signals = await asyncio.to_thread(
-                    positional_scan, self.feed, self.s.watchlist, self.ctx
+                    positional_scan, self.feed, self.s.watchlist, self.ctx,
+                    self.s.index_symbol,
                 )
                 for sig in signals:
                     if sig.symbol not in self.active and sig.symbol not in self.pending:

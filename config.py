@@ -73,6 +73,20 @@ class Settings:
     max_position_value: float = field(default_factory=lambda: _f("MAX_POSITION_VALUE", 50_000.0))
     allow_shorts: bool = field(default_factory=lambda: _b("ALLOW_SHORTS", False))
 
+    # Portfolio-level risk (Van Tharp / Turtle heat caps): cap concurrent
+    # positions and total open risk (sum of entry-to-stop risk across open
+    # positions) as % of capital, on top of per-trade sizing above.
+    max_open_positions: int = field(default_factory=lambda: _i("MAX_OPEN_POSITIONS", 6))
+    max_portfolio_risk_pct: float = field(default_factory=lambda: _f("MAX_PORTFOLIO_RISK_PCT", 6.0))
+
+    # Index regime gate (Faber 200-DMA rule): positional entries only while
+    # this NSE-tradeable index proxy closes above its 200-day SMA. NIFTYBEES
+    # is the Nifty 50 ETF, so it flows through the normal equity data path.
+    index_symbol: str = field(default_factory=lambda: _s("INDEX_SYMBOL", "NIFTYBEES"))
+
+    # Backtest slippage assumption, % of turnover per side
+    slippage_pct: float = field(default_factory=lambda: _f("SLIPPAGE_PCT", 0.05))
+
     # Intraday strategy
     poll_seconds: int = field(default_factory=lambda: _i("POLL_SECONDS", 20))
     # Paper defaults (SSRN 4729284): OR = first 5-min bar, target = 2R

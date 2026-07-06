@@ -214,6 +214,81 @@ def squeeze_momentum(
     return on, mom
 
 
+def efficiency_ratio(close: list[float], period: int = 20) -> float | None:
+    """Kaufman's Efficiency Ratio: |net change| / sum of |bar-to-bar changes|
+    over `period` bars. ~1 = clean directional move, ~0 = churn."""
+    if len(close) < period + 1:
+        return None
+    window = close[-(period + 1):]
+    net = abs(window[-1] - window[0])
+    path = sum(abs(window[i] - window[i - 1]) for i in range(1, len(window)))
+    return net / path if path > 0 else 0.0
+
+
+def market_regime(high: list[float], low: list[float], close: list[float]) -> str:
+    """Deterministic regime bucket from daily candles — no ML, pure thresholds
+    (pattern adapted from QuantDinger's rule-based regime classifier: EMA gap,
+    ATR%, and Kaufman efficiency).
+
+    Returns one of: bull_trend / bear_trend / range / high_volatility /
+    transition / unknown (insufficient data — callers should fail open)."""
+    if len(close) < 35:
+        return "unknown"
+    e_fast = ema(close, 10)
+    e_slow = ema(close, 30)
+    atr_v = atr(high, low, close, 14)
+    er = efficiency_ratio(close, 20)
+    if e_fast[-1] is None or e_slow[-1] is None or atr_v[-1] is None or er is None:
+        return "unknown"
+    px = close[-1]
+    ema_gap_pct = (e_fast[-1] - e_slow[-1]) / e_slow[-1] * 100.0
+    atr_pct = atr_v[-1] / px * 100.0
+
+    if atr_pct > 4.0:
+        return "high_volatility"
+    if ema_gap_pct > 0.5 and er > 0.3:
+        return "bull_trend"
+    if ema_gap_pct < -0.5 and er > 0.3:
+        return "bear_trend"
+    if abs(ema_gap_pct) <= 0.5 and atr_pct < 2.0:
+        return "range"
+    return "transition"
+
+
+def macd(
+    close: list[float], fast: int = 12, slow: int = 26, signal: int = 9,
+) -> tuple[list[float | None], list[float | None], list[float | None]]:
+    """Standard MACD: EMA(fast) - EMA(slow), signal = EMA(signal) of that line,
+    histogram = line - signal. Returns (line, signal, histogram)."""
+    ema_fast, ema_slow = ema(close, fast), ema(close, slow)
+    line: list[float | None] = [
+        (a - b) if a is not None and b is not None else None
+        for a, b in zip(ema_fast, ema_slow)
+    ]
+    start = next((i for i, v in enumerate(line) if v is not None), len(line))
+    dense = [v for v in line[start:] if v is not None]  # type: ignore[misc]
+    sig_dense = ema(dense, signal)
+    sig: list[float | None] = [None] * len(line)
+    sig[start:start + len(sig_dense)] = sig_dense
+    hist: list[float | None] = [
+        (a - b) if a is not None and b is not None else None for a, b in zip(line, sig)
+    ]
+    return line, sig, hist
+
+
+def donchian(high: list[float], low: list[float], period: int) -> tuple[list[float | None], list[float | None]]:
+    """Rolling (highest high, lowest low) over `period` bars — Turtle-style
+    channel. Index i's value uses bars [i-period+1, i], never the current bar
+    alone, so it's the channel as of the CLOSE of bar i."""
+    n = len(high)
+    upper: list[float | None] = [None] * n
+    lower: list[float | None] = [None] * n
+    for i in range(period - 1, n):
+        upper[i] = max(high[i - period + 1: i + 1])
+        lower[i] = min(low[i - period + 1: i + 1])
+    return upper, lower
+
+
 def chandelier_stop(high: list[float], low: list[float], close: list[float],
                     period: int = 22, mult: float = 3.0) -> float | None:
     """Le Beau's Chandelier Exit (long side): highest high of last `period`

@@ -35,15 +35,17 @@ from __future__ import annotations
 
 import argparse
 import logging
+import random
 import statistics
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from config import IST, Settings
+from costs import round_trip_costs
 from groww_adapter import make_feed
 from indicators import atr as atr_indicator
-from indicators import chandelier_stop
+from indicators import chandelier_stop, sma
 from positional import MIN_HISTORY, scan_symbol
 from recommendation import Side
 from risk_manager import suggested_qty
@@ -65,8 +67,48 @@ class Trade:
     qty: int
     exit: float
     exit_reason: str      # "stop" | "target" | "stop_ambiguous" | "eod_close" | "time_stop"
-    pnl: float
-    r_multiple: float      # pnl per unit of initial risk — the size-independent measure
+    pnl: float             # NET of transaction costs + slippage (see costs.py)
+    r_multiple: float      # net pnl per unit of initial risk — size-independent
+    costs: float = 0.0     # ₹ round-trip charges + slippage deducted from pnl
+
+
+def _clean_candles(candles: list[dict], label: str, warnings: list[str]) -> list[dict]:
+    """OHLC sanity gate at the loader boundary: drop bars where high < low,
+    high/low don't bracket open/close, or prices are non-positive."""
+    clean = [
+        c for c in candles
+        if c["low"] > 0
+        and c["high"] >= c["low"]
+        and c["high"] >= max(c["open"], c["close"])
+        and c["low"] <= min(c["open"], c["close"])
+    ]
+    dropped = len(candles) - len(clean)
+    if dropped:
+        warnings.append(f"{label}: dropped {dropped} malformed OHLC bars at load")
+    return clean
+
+
+def _monte_carlo_dd(pnls: list[float], start_capital: float,
+                    iters: int = 1000, seed: int = 42) -> dict:
+    """Shuffle the SAME trades' order `iters` times and measure max drawdown of
+    each sequence. The observed curve is one ordering among many — p95 says how
+    deep 5% of equally-likely orderings drew down, i.e. sequencing luck."""
+    rng = random.Random(seed)
+    dds = []
+    seq = list(pnls)
+    for _ in range(iters):
+        rng.shuffle(seq)
+        eq, peak, dd = start_capital, start_capital, 0.0
+        for p in seq:
+            eq += p
+            peak = max(peak, eq)
+            dd = max(dd, peak - eq)
+        dds.append(dd)
+    dds.sort()
+    return {
+        "p50_max_dd": round(dds[len(dds) // 2], 2),
+        "p95_max_dd": round(dds[int(len(dds) * 0.95)], 2),
+    }
 
 
 @dataclass
@@ -78,6 +120,28 @@ class BacktestResult:
     ending_capital: float = 0.0
     equity_curve: list[float] = field(default_factory=list)  # after each trade
     warnings: list[str] = field(default_factory=list)
+    buy_hold_return_pct: dict = field(default_factory=dict)  # symbol -> % over same window
+
+    def _diagnostics(self, n: int, win_rate: float, profit_factor: float | None,
+                     max_dd: float) -> list[str]:
+        """Rule-based post-backtest review (thresholds per QuantDinger's
+        templated strategy review) — cheap flags, not verdicts."""
+        out = []
+        if 0 < n < 5:
+            out.append("sample far too small (<5 trades) — result is noise")
+        if profit_factor is not None and profit_factor < 1.0:
+            out.append(f"profit factor {profit_factor} < 1 — strategy lost money after costs")
+        if n >= 5 and win_rate < 35.0:
+            out.append(f"win rate {win_rate}% < 35% — verify the R:R makes this survivable")
+        if self.starting_capital and max_dd >= 0.10 * self.starting_capital:
+            out.append(f"max drawdown ₹{max_dd:,.0f} ≥ 10% of capital — cap position size")
+        run = worst = 0
+        for t in self.trades:
+            run = run + 1 if t.pnl <= 0 else 0
+            worst = max(worst, run)
+        if worst >= 3:
+            out.append(f"{worst} consecutive losses at worst — consider a cooldown after streaks")
+        return out
 
     def summary(self) -> dict:
         n = len(self.trades)
@@ -99,6 +163,7 @@ class BacktestResult:
                 years = max((d1 - d0).days / 365.25, 1 / 365.25)
             except ValueError:
                 years = None
+        total_pnl = round(sum(t.pnl for t in self.trades), 2)
         total_return_pct = (
             (self.ending_capital / self.starting_capital - 1) * 100
             if self.starting_capital else 0.0
@@ -107,24 +172,49 @@ class BacktestResult:
             ((self.ending_capital / self.starting_capital) ** (1 / years) - 1) * 100
             if years and self.starting_capital and self.ending_capital > 0 else None
         )
+        max_dd_pct = 100 * max_dd / self.starting_capital if self.starting_capital else 0.0
+        win_rate = round(100 * len(wins) / n, 1) if n else 0.0
+        profit_factor = round(gross_win / gross_loss, 2) if gross_loss > 0 else None
+
+        by_exit: dict = {}
+        for t in self.trades:
+            b = by_exit.setdefault(t.exit_reason, {"count": 0, "wins": 0, "total_pnl": 0.0})
+            b["count"] += 1
+            b["wins"] += 1 if t.pnl > 0 else 0
+            b["total_pnl"] = round(b["total_pnl"] + t.pnl, 2)
+        for b in by_exit.values():
+            b["win_rate_pct"] = round(100 * b.pop("wins") / b["count"], 1)
+
         return {
             "strategy": self.strategy,
             "n_trades": n,
-            "win_rate_pct": round(100 * len(wins) / n, 1) if n else 0.0,
-            "profit_factor": round(gross_win / gross_loss, 2) if gross_loss > 0 else None,
+            "win_rate_pct": win_rate,
+            "profit_factor": profit_factor,
             "avg_r_multiple": round(statistics.mean(r_values), 2) if r_values else 0.0,
-            "expectancy_r": round(statistics.mean(r_values), 2) if r_values else 0.0,
             "stdev_r": round(statistics.pstdev(r_values), 2) if len(r_values) > 1 else 0.0,
-            "total_pnl": round(sum(t.pnl for t in self.trades), 2),
+            "total_pnl": total_pnl,
+            "total_costs": round(sum(t.costs for t in self.trades), 2),
             "total_return_pct": round(total_return_pct, 1),
             "cagr_pct": round(cagr_pct, 1) if cagr_pct is not None else None,
             "max_drawdown": round(max_dd, 2),
+            "recovery_factor": round(total_pnl / max_dd, 2) if max_dd > 0 else None,
+            "calmar_ratio": (
+                round(cagr_pct / max_dd_pct, 2)
+                if cagr_pct is not None and max_dd_pct > 0 else None
+            ),
+            "monte_carlo": (
+                _monte_carlo_dd([t.pnl for t in self.trades], self.starting_capital)
+                if n >= 5 else None
+            ),
+            "by_exit_reason": by_exit,
+            "buy_hold_return_pct": self.buy_hold_return_pct,
             "ambiguous_bar_exits": self.ambiguous_bars,
             "ambiguous_bar_rate_pct": (
                 round(100 * self.ambiguous_bars / n, 1) if n else 0.0
             ),
             "starting_capital": self.starting_capital,
             "ending_capital": round(self.ending_capital, 2),
+            "diagnostics": self._diagnostics(n, win_rate, profit_factor, max_dd),
             "warnings": self.warnings,
         }
 
@@ -160,11 +250,16 @@ def backtest_intraday(feed, settings: Settings, symbols: list[str], days: int) -
     ctx = MarketContext()  # no historical Fable regime available — rules only
 
     for symbol in symbols:
-        intraday = feed.get_intraday_candles(symbol, days=days, interval_minutes=settings.bar_minutes)
-        daily = feed.get_daily_candles(symbol, days=days + 30)
+        intraday = _clean_candles(
+            feed.get_intraday_candles(symbol, days=days, interval_minutes=settings.bar_minutes),
+            f"{symbol} intraday", result.warnings)
+        daily = _clean_candles(feed.get_daily_candles(symbol, days=days + 30),
+                               f"{symbol} daily", result.warnings)
         if len(intraday) < 50 or len(daily) < 20:
             result.warnings.append(f"{symbol}: insufficient history, skipped")
             continue
+        result.buy_hold_return_pct[symbol] = round(
+            (intraday[-1]["close"] / intraday[0]["close"] - 1) * 100, 1)
 
         by_day: dict = {}
         for c in intraday:
@@ -217,6 +312,8 @@ def backtest_intraday(feed, settings: Settings, symbols: list[str], days: int) -
             for ts, c in rows[sig_idx + 1:]:
                 if ts.time() >= MARKET_CLOSE:
                     break
+                if c["high"] == c["low"]:
+                    continue  # circuit-locked bar: one-sided book, no realistic fill
                 r = _resolve_exit(is_long, c["open"], c["high"], c["low"], signal.stop, signal.target)
                 if r:
                     exit_price, exit_reason = r
@@ -227,14 +324,16 @@ def backtest_intraday(feed, settings: Settings, symbols: list[str], days: int) -
                 result.ambiguous_bars += 1
 
             direction = 1 if is_long else -1
-            pnl = round((exit_price - signal.entry) * qty * direction, 2)
+            gross = (exit_price - signal.entry) * qty * direction
+            costs = round_trip_costs("MIS", signal.entry, exit_price, qty, settings.slippage_pct)
+            pnl = round(gross - costs, 2)
             risk = abs(signal.entry - signal.stop) * qty
             capital += pnl
             result.equity_curve.append(capital)
             result.trades.append(Trade(
                 symbol, signal.side, day.isoformat(), signal.entry, signal.stop,
                 signal.target, qty, round(exit_price, 2), exit_reason, pnl,
-                round(pnl / risk, 2) if risk > 0 else 0.0,
+                round(pnl / risk, 2) if risk > 0 else 0.0, costs,
             ))
 
     result.ending_capital = capital
@@ -249,16 +348,37 @@ def backtest_intraday(feed, settings: Settings, symbols: list[str], days: int) -
 
 # -------------------------------------------------------------- positional
 
-def backtest_positional(feed, settings: Settings, symbols: list[str], days: int) -> BacktestResult:
-    result = BacktestResult(strategy="positional_ema_chandelier", starting_capital=settings.capital)
+def _index_entry_gate(index_candles: list[dict]) -> set:
+    """Dates on which the Faber 200-DMA index gate PERMITS new entries: the
+    index closed above its 200-SMA as of that date (no lookahead — each date's
+    SMA uses closes up to and including that date, known by that evening).
+    Empty index history -> empty set means 'gate unavailable', treated as
+    fail-open by the caller."""
+    closes = [c["close"] for c in index_candles]
+    sma200 = sma(closes, 200)
+    return {
+        c["date"] for c, s in zip(index_candles, sma200)
+        if s is not None and c["close"] > s
+    }
+
+
+def backtest_positional(feed, settings: Settings, symbols: list[str], days: int,
+                        index_candles: list[dict] | None = None) -> BacktestResult:
+    result = BacktestResult(strategy="positional_cascade", starting_capital=settings.capital)
     capital = settings.capital
     ctx = MarketContext()
+    gate_dates = _index_entry_gate(index_candles) if index_candles else None
+    if index_candles and not gate_dates:
+        result.warnings.append("index gate: no dates above 200-DMA in window — no entries taken")
 
     for symbol in symbols:
-        candles = feed.get_daily_candles(symbol, days=days)
+        candles = _clean_candles(feed.get_daily_candles(symbol, days=days),
+                                 f"{symbol} daily", result.warnings)
         if len(candles) < MIN_HISTORY + 20:
             result.warnings.append(f"{symbol}: insufficient daily history, skipped")
             continue
+        result.buy_hold_return_pct[symbol] = round(
+            (candles[-1]["close"] / candles[MIN_HISTORY]["close"] - 1) * 100, 1)
 
         in_position = False
         entry = stop = target = initial_risk_per_share = 0.0
@@ -268,6 +388,11 @@ def backtest_positional(feed, settings: Settings, symbols: list[str], days: int)
         t = MIN_HISTORY
         while t < len(candles) - 1:
             if not in_position:
+                # index gate first (cheap): entries only while the index proxy
+                # was above its 200-DMA as of the SIGNAL day
+                if gate_dates is not None and candles[t]["date"] not in gate_dates:
+                    t += 1
+                    continue
                 sig = scan_symbol(symbol, candles[: t + 1], ctx)  # only sees days 0..t
                 t += 1
                 if not sig:
@@ -298,21 +423,25 @@ def backtest_positional(feed, settings: Settings, symbols: list[str], days: int)
                 if chand is not None:
                     stop = max(stop, chand)  # long-only trailing stop only ratchets up
 
-            r = _resolve_exit(True, day["open"], day["high"], day["low"], stop, target)
+            circuit_locked = day["high"] == day["low"]  # one-sided book, no realistic fill
+            r = None if circuit_locked else _resolve_exit(
+                True, day["open"], day["high"], day["low"], stop, target)
             if r is None and t == len(candles) - 2:
                 r = (candles[t + 1]["close"], "time_stop")  # backtest window ended, mark-to-market close
             if r:
                 exit_price, exit_reason = r
                 if exit_reason == "stop_ambiguous":
                     result.ambiguous_bars += 1
-                pnl = round((exit_price - entry) * qty, 2)
+                gross = (exit_price - entry) * qty
+                trade_costs = round_trip_costs("CNC", entry, exit_price, qty, settings.slippage_pct)
+                pnl = round(gross - trade_costs, 2)
                 risk = initial_risk_per_share * qty
                 capital += pnl
                 result.equity_curve.append(capital)
                 result.trades.append(Trade(
                     symbol, Side.BUY, entry_date, entry, stop, target,
                     qty, round(exit_price, 2), exit_reason, pnl,
-                    round(pnl / risk, 2) if risk > 0 else 0.0,
+                    round(pnl / risk, 2) if risk > 0 else 0.0, trade_costs,
                 ))
                 in_position = False
             t += 1
@@ -331,20 +460,38 @@ def backtest_positional(feed, settings: Settings, symbols: list[str], days: int)
 
 def _print_summary(result: BacktestResult) -> None:
     s = result.summary()
-    print(f"\n=== {s['strategy']} — {s['n_trades']} trades ===")
+    print(f"\n=== {s['strategy']} — {s['n_trades']} trades (PnL net of costs+slippage) ===")
     if s["n_trades"] == 0:
         print("No trades generated — check symbol history length / Groww credentials.")
     else:
         print(f"Win rate:        {s['win_rate_pct']}%")
         print(f"Profit factor:   {s['profit_factor']}")
         print(f"Avg R-multiple:  {s['avg_r_multiple']}  (stdev {s['stdev_r']})")
-        print(f"Total PnL:       ₹{s['total_pnl']:,.2f}")
+        print(f"Total PnL:       ₹{s['total_pnl']:,.2f}  (₹{s['total_costs']:,.2f} paid in costs)")
         print(f"Total return:    {s['total_return_pct']}%"
               + (f"  (CAGR {s['cagr_pct']}%)" if s['cagr_pct'] is not None else ""))
-        print(f"Max drawdown:    ₹{s['max_drawdown']:,.2f}")
+        print(f"Max drawdown:    ₹{s['max_drawdown']:,.2f}"
+              + (f"  (recovery factor {s['recovery_factor']})" if s['recovery_factor'] else ""))
+        if s["calmar_ratio"] is not None:
+            print(f"Calmar ratio:    {s['calmar_ratio']}")
+        if s["monte_carlo"]:
+            mc = s["monte_carlo"]
+            print(f"Sequencing risk: same trades reshuffled 1000× → median max-DD "
+                  f"₹{mc['p50_max_dd']:,.0f}, 95th pct ₹{mc['p95_max_dd']:,.0f}")
+        if s["by_exit_reason"]:
+            print("Exit attribution:")
+            for reason, b in sorted(s["by_exit_reason"].items()):
+                print(f"  {reason:<16} {b['count']:>4} trades, {b['win_rate_pct']}% win, "
+                      f"₹{b['total_pnl']:,.2f}")
+        if s["buy_hold_return_pct"]:
+            avg_bh = sum(s["buy_hold_return_pct"].values()) / len(s["buy_hold_return_pct"])
+            print(f"Buy & hold:      avg {avg_bh:.1f}% over the same window "
+                  f"(strategy did {s['total_return_pct']}%)")
         print(f"Ambiguous exits: {s['ambiguous_bar_exits']} ({s['ambiguous_bar_rate_pct']}% of trades) "
               "— stop-wins convention applied, see module docstring")
         print(f"Capital:         ₹{s['starting_capital']:,.0f} → ₹{s['ending_capital']:,.2f}")
+    for d in s["diagnostics"]:
+        print(f"🔎 {d}")
     for w in s["warnings"]:
         print(f"⚠️  {w}")
 
@@ -355,6 +502,8 @@ def main() -> None:
     p.add_argument("strategy", choices=["intraday", "positional"])
     p.add_argument("symbols", nargs="+")
     p.add_argument("--days", type=int, default=60)
+    p.add_argument("--no-index-gate", action="store_true",
+                   help="disable the Faber 200-DMA index gate (positional only)")
     args = p.parse_args()
 
     settings = Settings()
@@ -367,7 +516,13 @@ def main() -> None:
     if args.strategy == "intraday":
         result = backtest_intraday(feed, settings, [s.upper() for s in args.symbols], args.days)
     else:
-        result = backtest_positional(feed, settings, [s.upper() for s in args.symbols], args.days)
+        index_candles = None
+        if not args.no_index_gate:
+            index_candles = feed.get_daily_candles(settings.index_symbol, days=args.days + 320)
+            if not index_candles:
+                print(f"(index gate: no history for {settings.index_symbol} — running ungated)")
+        result = backtest_positional(feed, settings, [s.upper() for s in args.symbols],
+                                     args.days, index_candles)
     _print_summary(result)
 
 

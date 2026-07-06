@@ -19,6 +19,20 @@ def suggested_qty(entry: float, stop: float, settings: Settings) -> int:
     return max(qty, 0)
 
 
+def portfolio_allows(open_count: int, open_risk: float, new_risk: float,
+                     settings: Settings) -> tuple[bool, str]:
+    """Portfolio heat check (Turtle unit caps / Van Tharp's 6-10% total-open-
+    risk heuristic): a new idea is blocked when either cap would be breached.
+    open_risk / new_risk are ₹ entry-to-stop amounts. Returns (ok, reason)."""
+    if open_count >= settings.max_open_positions:
+        return False, f"max open positions ({settings.max_open_positions}) reached"
+    heat_cap = settings.capital * settings.max_portfolio_risk_pct / 100.0
+    if open_risk + new_risk > heat_cap:
+        return False, (f"portfolio heat cap: open ₹{open_risk:,.0f} + new ₹{new_risk:,.0f} "
+                       f"> ₹{heat_cap:,.0f} ({settings.max_portfolio_risk_pct}% of capital)")
+    return True, ""
+
+
 class KillSwitch:
     """Execute-mode only: halts auto-orders once the day's realised loss exceeds
     a multiple of the per-trade risk budget. Recommend mode never places orders,
