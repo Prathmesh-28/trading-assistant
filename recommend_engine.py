@@ -73,7 +73,76 @@ class RecommendEngine:
         self._positional_done = None
         self._exit_review_done = None
         self._rotation_done_month = None
+        self.last_tick_at: float = 0.0   # data_loop liveness (epoch); watchdog + /api/health read it
+        self._apply_setting_overrides()
         self.notifier.on_command(self.handle_command)
+
+    # Runtime-tunable settings (dashboard Settings tab). Whitelist keeps the
+    # PATCH surface away from credentials and structural config.
+    TUNABLE = {
+        "watchlist": list,
+        "risk_per_trade_pct": float,
+        "capital": float,
+        "max_position_value": float,
+        "max_open_positions": int,
+        "max_portfolio_risk_pct": float,
+    }
+
+    def _apply_setting_overrides(self) -> None:
+        """Persisted dashboard tweaks win over env defaults across restarts."""
+        try:
+            overrides = self.journal.load_setting_overrides()
+        except Exception:  # noqa: BLE001 — never block startup on this
+            return
+        for key, value in overrides.items():
+            caster = self.TUNABLE.get(key)
+            if caster is None:
+                continue
+            try:
+                if caster is list:
+                    value = [str(s).strip().upper() for s in value if str(s).strip()]
+                else:
+                    value = caster(value)
+                setattr(self.s, key, value)
+            except (TypeError, ValueError):
+                log.warning("ignoring bad persisted setting %s=%r", key, value)
+
+    def update_setting(self, key: str, value) -> str:
+        """Validate + apply + persist one tunable. Returns '' or an error."""
+        caster = self.TUNABLE.get(key)
+        if caster is None:
+            return f"'{key}' is not editable at runtime"
+        try:
+            if caster is list:
+                if not isinstance(value, list):
+                    return "watchlist must be a list of symbols"
+                value = [str(s).strip().upper() for s in value if str(s).strip()]
+                if not (1 <= len(value) <= 25):
+                    return "watchlist must have 1-25 symbols"
+                if any(not s.replace("&", "").replace("-", "").isalnum() or len(s) > 20
+                       for s in value):
+                    return "symbols must be alphanumeric NSE codes"
+            else:
+                value = caster(value)
+                limits = {
+                    "risk_per_trade_pct": (0.05, 5.0),
+                    "capital": (1000.0, 1e9),
+                    "max_position_value": (1000.0, 1e9),
+                    "max_open_positions": (1, 25),
+                    "max_portfolio_risk_pct": (0.5, 25.0),
+                }[key]
+                if not (limits[0] <= value <= limits[1]):
+                    return f"{key} must be between {limits[0]} and {limits[1]}"
+        except (TypeError, ValueError):
+            return f"invalid value for {key}"
+        setattr(self.s, key, value)
+        self.journal.save_setting_override(key, value)
+        log.info("setting updated: %s=%r", key, value)
+        self._emit_snapshot()
+        return ""
+
+    def settings_view(self) -> dict:
+        return {k: getattr(self.s, k) for k in self.TUNABLE}
 
     # ------------------------------------------------------------- events
 
@@ -600,6 +669,8 @@ class RecommendEngine:
                 if market_is_open(now):
                     await self.squareoff_check(now)
                     await self.positional_exit_review(now)
+                import time as _time
+                self.last_tick_at = _time.time()
                 self._emit("tick", {"prices": dict(self.last_ltp),
                                     "market": market_phase(now),
                                     "server_time": now.isoformat()})
@@ -633,6 +704,28 @@ class RecommendEngine:
                     if sig.symbol not in self.active and sig.symbol not in self.pending:
                         await self.publish(sig)
             await asyncio.sleep(1800)
+
+    async def watchdog_loop(self) -> None:
+        """Owner-facing liveness alarm: if the data loop stops ticking during
+        market hours (API up, engine wedged), say so on Telegram — silence must
+        never look like 'no signals today'. Re-alerts at most hourly."""
+        import time as _time
+        last_alerted = 0.0
+        while True:
+            await asyncio.sleep(120)
+            now = datetime.now(IST)
+            if not market_is_open(now) and not getattr(self.feed, "synthetic", False):
+                continue
+            stall = _time.time() - self.last_tick_at if self.last_tick_at else 0.0
+            if stall > max(5 * self.s.poll_seconds, 180) and _time.time() - last_alerted > 3600:
+                last_alerted = _time.time()
+                await self._alert(
+                    "danger", "",
+                    f"🚨 WATCHDOG: no market data ticks for {int(stall)}s during "
+                    "trading hours — stops are NOT being monitored. Check the "
+                    "server/Groww connection.",
+                    f"WATCHDOG: data loop stalled {int(stall)}s — stops unmonitored",
+                )
 
     async def _supervise(self, name: str, factory) -> None:
         """Run a loop forever, restarting it after unexpected crashes. One sick
@@ -690,6 +783,7 @@ class RecommendEngine:
             self._supervise("data_loop", self.data_loop),
             self._supervise("context_loop", self.context_loop),
             self._supervise("positional_loop", self.positional_loop),
+            self._supervise("watchdog_loop", self.watchdog_loop),
         ]
         if self.notifier.enabled:
             tasks.append(self._supervise("command_loop", self.notifier.command_loop))

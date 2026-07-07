@@ -3,6 +3,9 @@ import "./index.css";
 import "./app.css";
 import { API_BASE, api, clearToken, getToken } from "./api";
 import { Landing } from "./Landing";
+import { onToast, toast } from "./toast";
+import { SettingsPanel } from "./components/SettingsPanel";
+import { downloadHistoryCsv } from "./api";
 import { AlertBanner } from "./components/AlertBanner";
 import { BacktestPanel } from "./components/BacktestPanel";
 import { ChartPanel } from "./components/ChartPanel";
@@ -16,18 +19,27 @@ import { Watchlist } from "./components/Watchlist";
 import type { HistoryRow } from "./types";
 import { useLive } from "./useLive";
 
-type Tab = "trade" | "backtest" | "history";
+type Tab = "trade" | "backtest" | "history" | "settings";
 
 function App() {
   const [authed, setAuthed] = useState(() => Boolean(getToken()));
   if (!authed) {
     return <Landing onLogin={() => setAuthed(true)} />;
   }
-  return <Dashboard onLogout={() => { clearToken(); setAuthed(false); }} />;
+  return <Dashboard onLogout={() => { api.logout(); clearToken(); setAuthed(false); }} />;
 }
 
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   const { snapshot, connected, alerts, dismissAlert, prices, market } = useLive();
+  const [clientAlerts, setClientAlerts] = useState<{ id: number; level: "info" | "success" | "warning" | "danger"; message: string; at: number }[]>([]);
+  useEffect(() => {
+    let seq = 100000;
+    return onToast((t) => {
+      const id = ++seq;
+      setClientAlerts((prev) => [...prev, { id, at: Date.now(), ...t }]);
+      setTimeout(() => setClientAlerts((prev) => prev.filter((a) => a.id !== id)), 6000);
+    });
+  }, []);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [pauseBusy, setPauseBusy] = useState(false);
   const [slowConnect, setSlowConnect] = useState(false);
@@ -90,7 +102,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 
   return (
     <>
-      <AlertBanner alerts={alerts} onDismiss={dismissAlert} />
+      <AlertBanner alerts={[...alerts, ...clientAlerts]} onDismiss={(id) => { dismissAlert(id); setClientAlerts((prev) => prev.filter((a) => a.id !== id)); }} />
       <header className="app-header">
         <div className="header-top">
           <div className="header-brand">
@@ -110,6 +122,11 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             <span className={`conn-dot ${connected ? "conn-on" : "conn-off"}`} title={connected ? "live" : "reconnecting"} />
           </div>
         </div>
+        {!connected && (
+          <p className="demo-banner disconnect-banner">
+            Reconnecting to the engine… prices and alerts are paused (last data may be stale).
+          </p>
+        )}
         {snapshot.mode !== "LIVE" && (
           <p className="demo-banner">
             DEMO DATA — synthetic random-walk prices for trying the app. Nothing here is a real
@@ -122,6 +139,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
               ["trade", "Trade"],
               ["backtest", "Backtest"],
               ["history", "History"],
+              ["settings", "Settings"],
             ] as [Tab, string][]
           ).map(([key, label]) => (
             <button key={key} className={`tab-btn ${tab === key ? "active" : ""}`} onClick={() => setTab(key)}>
@@ -186,9 +204,16 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 
         {tab === "backtest" && <BacktestPanel snapshot={snapshot} />}
 
+        {tab === "settings" && <SettingsPanel />}
+
         {tab === "history" && (
           <section className="section">
-            <h2>Trade history</h2>
+            <div className="section-head">
+              <h2>Trade history</h2>
+              <button className="btn btn-ghost" onClick={() => downloadHistoryCsv().catch(() => toast("danger", "CSV export failed"))}>
+                ⬇ CSV
+              </button>
+            </div>
             {history.length === 0 ? (
               <p className="text-muted empty-note">No journaled trades yet.</p>
             ) : (

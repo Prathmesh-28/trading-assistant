@@ -85,13 +85,31 @@ app.add_middleware(
 
 # ------------------------------------------------------------------ auth
 
-# Deterministic session token derived from the credentials: survives server
-# restarts (no session store) and rotates the moment the password changes.
-_SESSION_TOKEN = hmac.new(
-    f"{settings.auth_username}:{settings.auth_password}".encode(),
-    b"trading-assistant-session-v1",
-    hashlib.sha256,
-).hexdigest()
+# Signed, expiring session tokens: "<issued_at>.<hmac(creds, issued_at)>".
+# No session store needed — tokens survive restarts, rotate the moment the
+# password changes, and expire after AUTH_TTL_DAYS (env, default 30).
+_CREDS_KEY = f"{settings.auth_username}:{settings.auth_password}".encode()
+_TOKEN_TTL = float(os.getenv("AUTH_TTL_DAYS", "30")) * 86400
+
+
+def _sign(issued_at: str) -> str:
+    return hmac.new(_CREDS_KEY, f"session-v2:{issued_at}".encode(), hashlib.sha256).hexdigest()
+
+
+def _issue_token() -> str:
+    ts = str(int(time.time()))
+    return f"{ts}.{_sign(ts)}"
+
+
+def _token_ok(token: str) -> bool:
+    try:
+        issued_at, sig = token.split(".", 1)
+        if not hmac.compare_digest(sig, _sign(issued_at)):
+            return False
+        return (time.time() - float(issued_at)) < _TOKEN_TTL
+    except (ValueError, AttributeError):
+        return False
+
 
 # Paths reachable without a token: health (uptime checks / wake-up pings)
 # and login itself.
@@ -101,26 +119,44 @@ _failed_logins: dict = {}   # ip -> [timestamps], simple brute-force damper
 _LOCKOUT_ATTEMPTS = 5
 _LOCKOUT_WINDOW = 300.0
 
-
-def _token_ok(token: str) -> bool:
-    return bool(token) and hmac.compare_digest(token, _SESSION_TOKEN)
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+    "Cache-Control": "no-store",  # API responses carry live position data
+}
 
 
 @app.middleware("http")
 async def require_auth(request: Request, call_next):
     path = request.url.path
     if not path.startswith("/api") or path in _PUBLIC_PATHS or request.method == "OPTIONS":
-        return await call_next(request)
-    auth_header = request.headers.get("authorization", "")
-    token = auth_header[7:] if auth_header.lower().startswith("bearer ") else ""
-    if not _token_ok(token):
-        return JSONResponse({"detail": "unauthorized"}, status_code=401)
-    return await call_next(request)
+        response = await call_next(request)
+    else:
+        auth_header = request.headers.get("authorization", "")
+        token = auth_header[7:] if auth_header.lower().startswith("bearer ") else ""
+        if not _token_ok(token):
+            response = JSONResponse({"detail": "unauthorized"}, status_code=401)
+        else:
+            response = await call_next(request)
+    for k, v in _SECURITY_HEADERS.items():
+        response.headers.setdefault(k, v)
+    return response
 
 
 class LoginBody(BaseModel):
     username: str
     password: str
+
+
+def _notify_owner(text: str) -> None:
+    """Fire-and-forget Telegram note to the owner — login security events."""
+    try:
+        asyncio.get_running_loop().create_task(engine.notifier.send(text))
+    except RuntimeError:
+        pass
 
 
 @app.post("/api/login")
@@ -135,22 +171,95 @@ async def login(body: LoginBody, request: Request):
     if not (user_ok and pass_ok):
         recent.append(now)
         _failed_logins[ip] = recent
+        log.warning("failed login from %s (%d recent)", ip, len(recent))
+        if len(recent) == 3:
+            _notify_owner(f"🔐 3 failed dashboard logins from {ip} in the last "
+                          f"{int(_LOCKOUT_WINDOW / 60)} min — if this isn't you, "
+                          "rotate AUTH_PASSWORD.")
         raise HTTPException(401, "wrong username or password")
     _failed_logins.pop(ip, None)
+    log.info("dashboard login from %s", ip)
+    _notify_owner(f"🔓 Dashboard login from {ip} "
+                  f"({request.headers.get('user-agent', '?')[:60]})")
     return {
-        "token": _SESSION_TOKEN,
+        "token": _issue_token(),
         "mode": "SYNTHETIC" if getattr(engine.feed, "synthetic", False) else "LIVE",
     }
+
+
+@app.get("/api/settings")
+async def get_settings():
+    return {"settings": engine.settings_view(), "editable": sorted(engine.TUNABLE)}
+
+
+class SettingsPatch(BaseModel):
+    settings: dict
+
+
+@app.patch("/api/settings")
+async def patch_settings(body: SettingsPatch):
+    errors = {}
+    applied = {}
+    for key, value in body.settings.items():
+        err = engine.update_setting(key, value)
+        if err:
+            errors[key] = err
+        else:
+            applied[key] = getattr(engine.s, key)
+    if errors and not applied:
+        raise HTTPException(400, "; ".join(f"{k}: {v}" for k, v in errors.items()))
+    return {"applied": applied, "errors": errors, "settings": engine.settings_view()}
+
+
+@app.post("/api/logout")
+async def logout():
+    # Tokens are stateless — logout is client-side (drop the token). This
+    # endpoint exists so the UI action hits an auditable server event.
+    log.info("dashboard logout")
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ REST API
 
+VERSION = os.getenv("RENDER_GIT_COMMIT", "dev")[:12]
+
+
 @app.get("/api/health")
 async def health():
+    """Public: uptime pings, wake-up probes, and the landing page's mode
+    display. Reports engine liveness so 'API up but engine dead' is visible."""
+    tick_age = round(time.time() - engine.last_tick_at, 1) if engine.last_tick_at else None
     return {
         "ok": True,
         "mode": "SYNTHETIC" if getattr(engine.feed, "synthetic", False) else "LIVE",
+        "version": VERSION,
+        "engine": {
+            "last_tick_age_s": tick_age,
+            "positions": len(engine.active),
+            "pending": len(engine.pending),
+            "paused": engine.paused,
+        },
     }
+
+
+@app.get("/api/history.csv")
+async def history_csv(limit: int = 1000):
+    """Journal export for spreadsheets / tax prep."""
+    import csv
+    import io
+
+    rows = engine.journal.history(limit=limit)
+    buf = io.StringIO()
+    if rows:
+        writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    from fastapi.responses import Response
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=trading-journal.csv"},
+    )
 
 
 @app.get("/api/status")

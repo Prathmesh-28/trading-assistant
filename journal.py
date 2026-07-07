@@ -14,6 +14,14 @@ from datetime import datetime
 from config import IST, Settings
 from recommendation import Recommendation, Status
 
+_SETTINGS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS ideas (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,7 +58,33 @@ class Journal:
                 pass
         self._conn = sqlite3.connect(settings.journal_path, check_same_thread=False)
         self._conn.execute(_SCHEMA)
+        self._conn.execute(_SETTINGS_SCHEMA)
         self._conn.commit()
+
+    def load_setting_overrides(self) -> dict:
+        """User-tuned runtime settings (dashboard Settings tab). Applied on top
+        of env defaults at engine start; JSON-decoded values."""
+        import json
+        with self._lock:
+            rows = self._conn.execute("SELECT key, value FROM settings").fetchall()
+        out = {}
+        for k, v in rows:
+            try:
+                out[k] = json.loads(v)
+            except ValueError:
+                continue
+        return out
+
+    def save_setting_override(self, key: str, value) -> None:
+        import json
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES (?,?,?)"
+                " ON CONFLICT(key) DO UPDATE SET value=excluded.value,"
+                " updated_at=excluded.updated_at",
+                (key, json.dumps(value), datetime.now(IST).isoformat()),
+            )
+            self._conn.commit()
 
     def record(self, rec: Recommendation) -> int:
         with self._lock:

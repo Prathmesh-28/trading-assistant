@@ -169,3 +169,14 @@ export interface BacktestJob {
   finished_at?: string;
   result?: { summary: BacktestSummary; equity_curve: number[]; trades: BacktestTrade[] };
 }
+
+/* ---------- runtime settings ---------- */
+
+export interface TunableSettings {
+  watchlist: string[];
+  risk_per_trade_pct: number;
+  capital: number;
+  max_position_value: number;
+  max_open_positions: number;
+  max_portfolio_risk_pct: number;
+}

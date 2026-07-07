@@ -1,4 +1,4 @@
-import type { BacktestJob, ChartData, HistoryRow, Snapshot } from "./types";
+import type { BacktestJob, ChartData, HistoryRow, Snapshot, TunableSettings } from "./types";
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -74,4 +74,31 @@ export const api = {
   startBacktest: (body: { strategy: string; symbols?: string[]; days: number; use_index_gate?: boolean }) =>
     req<BacktestJob>("/api/backtest", { method: "POST", body: JSON.stringify(body) }),
   backtestJob: (jobId: string) => req<BacktestJob>(`/api/backtest/${jobId}`),
+  getSettings: () => req<{ settings: TunableSettings; editable: string[] }>("/api/settings"),
+  patchSettings: (settings: Partial<TunableSettings>) =>
+    req<{ applied: Record<string, unknown>; errors: Record<string, string>; settings: TunableSettings }>(
+      "/api/settings",
+      { method: "PATCH", body: JSON.stringify({ settings }) },
+    ),
+  logout: () => req("/api/logout", { method: "POST" }).catch(() => {}),
 };
+
+export function historyCsvUrl(): string {
+  // CSV download needs the token in the URL since it's a plain <a> navigation;
+  // acceptable for a personal tool (token already lives in localStorage)
+  return `${API_BASE}/api/history.csv`;
+}
+
+export async function downloadHistoryCsv(): Promise<void> {
+  const token = getToken();
+  const res = await fetch(historyCsvUrl(), {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`csv ${res.status}`);
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "trading-journal.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}

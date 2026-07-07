@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
+import { toast } from "../toast";
 import type { Idea } from "../types";
 
 export function PositionCard({ idea }: { idea: Idea }) {
@@ -12,9 +13,22 @@ export function PositionCard({ idea }: { idea: Idea }) {
   const nearStop = distToStop <= distToTarget;
 
   const sell = async () => {
+    const p = price ? Number(price) : undefined;
+    if (p !== undefined && (!Number.isFinite(p) || p <= 0)) {
+      toast("warning", "Exit price must be a positive number (or leave blank for last price).");
+      return;
+    }
+    if (p !== undefined && idea.ltp > 0 && Math.abs(p - idea.ltp) / idea.ltp > 0.2) {
+      toast("warning", `Exit price ₹${p} is >20% from LTP ₹${idea.ltp} — double-check it.`);
+      return;
+    }
+    if (!window.confirm(`Mark ${idea.symbol} as SOLD${p ? ` @ ₹${p}` : " at last price"}? This books the PnL.`)) return;
     setBusy(true);
     try {
-      await api.sellPosition(idea.symbol, price ? Number(price) : undefined);
+      await api.sellPosition(idea.symbol, p);
+      toast("success", `${idea.symbol} closed — PnL journaled.`);
+    } catch {
+      toast("danger", `Couldn't close ${idea.symbol} — check the connection and retry.`);
     } finally {
       setBusy(false);
     }

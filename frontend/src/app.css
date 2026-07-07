@@ -742,3 +742,69 @@
   font-size: 12px;
   line-height: 1.4;
 }
+
+/* ---------- settings panel ---------- */
+
+.settings-panel {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.settings-hint {
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 6px 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.chip-x {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+.chip-x:hover {
+  color: var(--critical);
+}
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+.settings-field em {
+  font-style: normal;
+  font-size: 11px;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.section-head h2 {
+  margin: 0;
+}
+.disconnect-banner {
+  background: color-mix(in srgb, var(--critical) 15%, transparent);
+  border-color: color-mix(in srgb, var(--critical) 40%, transparent);
+  color: var(--critical);
+}

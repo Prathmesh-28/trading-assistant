@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
+import { toast } from "../toast";
 import type { Idea } from "../types";
 
 export function IdeaCard({ idea }: { idea: Idea }) {
@@ -9,17 +10,37 @@ export function IdeaCard({ idea }: { idea: Idea }) {
   const long = idea.side === "BUY";
 
   const buy = async () => {
+    const q = Number(qty);
+    const p = Number(price);
+    if (!Number.isFinite(q) || q <= 0 || !Number.isInteger(q)) {
+      toast("warning", "Quantity must be a positive whole number.");
+      return;
+    }
+    if (!Number.isFinite(p) || p <= 0) {
+      toast("warning", "Fill price must be a positive number.");
+      return;
+    }
+    if (Math.abs(p - idea.entry) / idea.entry > 0.2) {
+      toast("warning", `Fill price ₹${p} is >20% away from the idea's entry ₹${idea.entry} — double-check it.`);
+      return;
+    }
     setBusy(true);
     try {
-      await api.buyIdea(idea.symbol, Number(qty) || undefined, Number(price) || undefined);
+      await api.buyIdea(idea.symbol, q, p);
+      toast("success", `Tracking ${idea.symbol}: ${q} @ ₹${p}`);
+    } catch {
+      toast("danger", `Couldn't confirm ${idea.symbol} — check the connection and retry.`);
     } finally {
       setBusy(false);
     }
   };
   const skip = async () => {
+    if (!window.confirm(`Dismiss the ${idea.symbol} idea? It won't re-fire today.`)) return;
     setBusy(true);
     try {
       await api.skipIdea(idea.symbol);
+    } catch {
+      toast("danger", `Couldn't skip ${idea.symbol} — retry.`);
     } finally {
       setBusy(false);
     }
