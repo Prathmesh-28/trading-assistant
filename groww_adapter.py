@@ -4,10 +4,17 @@ No GROWW_API_KEY / GROWW_TOTP_SECRET in .env -> SyntheticFeed, a random-walk
 generator so the whole Telegram pipeline can be tested end to end. Positional
 scanning is skipped in synthetic mode (no real daily candles).
 
-⚠️  VERIFY AGAINST YOUR INSTALLED growwapi VERSION before live use:
-    - the access-token flow (get_access_token signature)
-    - the daily candle-interval constant (CANDLE_INTERVAL_DAY below)
-    - response key names in get_quote / get_historical_candle_data
+VERIFIED against growwapi==1.5.0 (pinned in requirements.txt), 2026-07-07:
+    - get_access_token(api_key, totp=..., secret=...) returns the token STRING
+      (its `-> dict` annotation is wrong in the SDK source)
+    - GrowwAPI(token) constructor takes that string
+    - get_historical_candle_data accepts epoch-ms ints for start/end and
+      interval_in_minutes as int (1440 = daily); deprecated in favour of
+      get_historical_candles but functional in 1.5.0
+    - get_quote(trading_symbol=, exchange=, segment=) returns the raw quote
+      payload; we read last_price/ltp and volume/total_traded_volume with
+      fallbacks for both spellings
+If you bump the pinned version, re-verify those four points.
 The wrapper is defensive — any Groww failure degrades to "no data this tick",
 never a crash.
 """
@@ -90,9 +97,11 @@ class GrowwAdapter:
             candles = data.get("candles") or []
             out = []
             for c in candles:
-                # candle rows: [epoch, open, high, low, close, volume]
+                # candle rows: [epoch, open, high, low, close, volume] — the
+                # epoch unit isn't documented, so normalize sec-vs-ms by size
+                epoch_s = float(c[0]) / 1000 if float(c[0]) > 1e12 else float(c[0])
                 out.append({
-                    "date": datetime.fromtimestamp(float(c[0]), tz=timezone.utc).date().isoformat(),
+                    "date": datetime.fromtimestamp(epoch_s, tz=timezone.utc).date().isoformat(),
                     "open": float(c[1]), "high": float(c[2]),
                     "low": float(c[3]), "close": float(c[4]),
                     "volume": float(c[5]) if len(c) > 5 else 0.0,
@@ -119,8 +128,10 @@ class GrowwAdapter:
             )
             out = []
             for c in data.get("candles") or []:
+                # normalize to epoch-ms regardless of what unit the API used
+                ts_ms = float(c[0]) if float(c[0]) > 1e12 else float(c[0]) * 1000
                 out.append({
-                    "ts": float(c[0]),
+                    "ts": ts_ms,
                     "open": float(c[1]), "high": float(c[2]),
                     "low": float(c[3]), "close": float(c[4]),
                     "volume": float(c[5]) if len(c) > 5 else 0.0,
