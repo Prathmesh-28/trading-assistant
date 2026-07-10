@@ -6,7 +6,7 @@ import { Landing } from "./Landing";
 import { marketLine } from "./lang";
 import { onToast } from "./toast";
 import { AlertBanner } from "./components/AlertBanner";
-import { ChartView } from "./views/ChartView";
+import { Markets } from "./views/Markets";
 import { Journal } from "./views/Journal";
 import { More } from "./views/More";
 import { Today } from "./views/Today";
@@ -17,7 +17,7 @@ type Tab = "today" | "chart" | "journal" | "more";
 
 const TABS: { key: Tab; icon: string; label: string }[] = [
   { key: "today", icon: "🏠", label: "Today" },
-  { key: "chart", icon: "📈", label: "Charts" },
+  { key: "chart", icon: "📈", label: "Markets" },
   { key: "journal", icon: "📒", label: "Journal" },
   { key: "more", icon: "☰", label: "More" },
 ];
@@ -111,7 +111,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 
       <main className="app-main">
         {tab === "today" && <Today snapshot={snapshot} market={market} />}
-        {tab === "chart" && <ChartView snapshot={snapshot} prices={prices} />}
+        {tab === "chart" && <Markets snapshot={snapshot} prices={prices} />}
         {tab === "journal" && <Journal rows={history} />}
         {tab === "more" && (
           <More

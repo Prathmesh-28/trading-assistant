@@ -148,6 +148,29 @@ class GrowwAdapter:
             return self.get_daily_candles(symbol, days=days)
         return self.get_intraday_candles(symbol, days=days, interval_minutes=interval_minutes)
 
+    def get_quote_snapshot(self, symbol: str, exchange: str = "NSE") -> dict | None:
+        """One-shot {ltp, prev_close, change_pct} straight from the quote
+        payload (no history round-trip) — for the Markets tab lists."""
+        try:
+            q = self.api.get_quote(
+                exchange=exchange, segment=self.api.SEGMENT_CASH, trading_symbol=symbol,
+            )
+            ltp = float(q.get("last_price") or q.get("ltp") or 0)
+            prev = float(q.get("close") or q.get("previous_close")
+                         or q.get("prev_close") or (q.get("ohlc") or {}).get("close", 0) or 0)
+            if ltp <= 0:
+                return None
+            chg = round((ltp - prev) / prev * 100, 2) if prev > 0 else None
+            return {"ltp": ltp, "prev_close": prev or None, "change_pct": chg}
+        except Exception as e:  # noqa: BLE001 — market lists fail soft
+            log.warning("quote snapshot %s failed: %s", symbol, e)
+            return None
+
+    def get_index_quote(self, symbol: str, exchange: str = "NSE") -> dict | None:
+        """Index value via the same quote API (NIFTY/BANKNIFTY on NSE, SENSEX
+        on BSE). Fails soft to None when the SDK/plan doesn't serve it."""
+        return self.get_quote_snapshot(symbol, exchange)
+
     def prev_close(self, symbol: str) -> float | None:
         """Most recent completed session's close (for watchlist change-%)."""
         try:
@@ -307,6 +330,29 @@ class SyntheticFeed:
         prev = past[-1]["close"] if past else self._base(symbol)
         return past + self._today_partial(symbol, interval_minutes, prev)
 
+    def get_quote_snapshot(self, symbol: str, exchange: str = "NSE") -> dict | None:
+        """One-shot {ltp, prev_close, change_pct} straight from the quote
+        payload (no history round-trip) — for the Markets tab lists."""
+        try:
+            q = self.api.get_quote(
+                exchange=exchange, segment=self.api.SEGMENT_CASH, trading_symbol=symbol,
+            )
+            ltp = float(q.get("last_price") or q.get("ltp") or 0)
+            prev = float(q.get("close") or q.get("previous_close")
+                         or q.get("prev_close") or (q.get("ohlc") or {}).get("close", 0) or 0)
+            if ltp <= 0:
+                return None
+            chg = round((ltp - prev) / prev * 100, 2) if prev > 0 else None
+            return {"ltp": ltp, "prev_close": prev or None, "change_pct": chg}
+        except Exception as e:  # noqa: BLE001 — market lists fail soft
+            log.warning("quote snapshot %s failed: %s", symbol, e)
+            return None
+
+    def get_index_quote(self, symbol: str, exchange: str = "NSE") -> dict | None:
+        """Index value via the same quote API (NIFTY/BANKNIFTY on NSE, SENSEX
+        on BSE). Fails soft to None when the SDK/plan doesn't serve it."""
+        return self.get_quote_snapshot(symbol, exchange)
+
     def prev_close(self, symbol: str) -> float | None:
         return self._base(symbol)
 
@@ -325,6 +371,28 @@ class SyntheticFeed:
     def get_intraday_candles(self, symbol: str, days: int = 14,
                              interval_minutes: int = 5) -> list[dict]:
         return []
+
+    INDEX_BASES = {"NIFTY": 24500.0, "SENSEX": 80500.0, "BANKNIFTY": 52400.0}
+
+    def _demo_quote(self, symbol: str, base: float) -> dict:
+        """Deterministic per-symbol daily quote: prev close = base, today's
+        move is a stable pseudo-random ±2% so lists look alive but repeatable."""
+        rng = random.Random(self._seed(symbol) ^ int(datetime.now(IST).strftime("%Y%m%d")))
+        chg = rng.uniform(-2.2, 2.4)
+        ltp = round(base * (1 + chg / 100), 2)
+        return {"ltp": ltp, "prev_close": base, "change_pct": round(chg, 2)}
+
+    def get_quote_snapshot(self, symbol: str, exchange: str = "NSE") -> dict | None:
+        live = self._state.get(symbol)
+        if live:  # watchlist names use the live walking price
+            pc = self._base(symbol)
+            chg = round((live["px"] - pc) / pc * 100, 2)
+            return {"ltp": round(live["px"], 2), "prev_close": pc, "change_pct": chg}
+        base = self.BASE_PRICES.get(symbol) or 500 + (self._seed(symbol) % 3500)
+        return self._demo_quote(symbol, float(base))
+
+    def get_index_quote(self, symbol: str, exchange: str = "NSE") -> dict | None:
+        return self._demo_quote(symbol, self.INDEX_BASES.get(symbol, 20000.0))
 
     def place_order(self, *args, **kwargs) -> None:
         return None

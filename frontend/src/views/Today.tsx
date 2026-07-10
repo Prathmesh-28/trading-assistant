@@ -1,6 +1,7 @@
 import { marketLine, regimeLabel, rupees } from "../lang";
 import type { MarketStatus, Snapshot } from "../types";
 import { IdeaCard } from "../components/IdeaCard";
+import { IndexStrip } from "../components/IndexStrip";
 import { PositionRow } from "../components/PositionRow";
 
 /** The home screen. One question, answered top-to-bottom:
@@ -23,6 +24,7 @@ export function Today({ snapshot, market }: { snapshot: Snapshot; market: Market
 
   return (
     <div className="today">
+      <IndexStrip />
       {closed && nothingOn && (
         <div className="closed-hero">
           <p className="closed-title">{marketLine(m)}</p>

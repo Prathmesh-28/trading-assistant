@@ -180,3 +180,26 @@ export interface TunableSettings {
   max_open_positions: number;
   max_portfolio_risk_pct: number;
 }
+
+/* ---------- markets ---------- */
+
+export interface MarketQuote {
+  ltp: number;
+  prev_close: number | null;
+  change_pct: number | null;
+  name?: string;
+}
+
+export interface MarketData {
+  group: string;
+  quotes: Record<string, MarketQuote>;
+  synthetic: boolean;
+}
+
+export interface IndexQuote {
+  symbol: string;
+  label: string;
+  ltp: number;
+  prev_close: number | null;
+  change_pct: number | null;
+}

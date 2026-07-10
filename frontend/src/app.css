@@ -1528,3 +1528,213 @@
 }
 .ld-engine-outdated .ld-dot { background: var(--critical); }
 .ld-engine-outdated { color: var(--critical); font-weight: 600; }
+
+/* ================= markets (Groww-style) ================= */
+
+.index-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.index-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.index-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.index-value {
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+.index-chg {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.markets {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.movers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.movers-col {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.movers-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mover {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.market-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.group-toggle {
+  display: flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+}
+.group-toggle button {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 8px;
+}
+.group-toggle button.active {
+  background: var(--surface-1);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+.market-search {
+  flex: 1;
+  min-width: 140px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+.market-search:focus {
+  outline: none;
+  border-color: var(--series-blue);
+}
+.stock-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-1);
+  overflow: hidden;
+}
+.stock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--gridline);
+  color: var(--text-primary);
+  text-align: left;
+}
+.stock-row:last-child { border-bottom: none; }
+.stock-row:hover { background: var(--surface-2); }
+.stock-id {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.stock-id strong { font-size: 14px; }
+.stock-id span {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stock-quote {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+.stock-quote strong {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.stock-quote span { font-size: 12px; font-weight: 700; }
+
+/* ================= desktop: sidebar app layout ================= */
+
+@media (min-width: 900px) {
+  .app-main {
+    max-width: 860px;
+    padding: 24px 32px calc(40px + env(safe-area-inset-bottom));
+    margin-left: calc(50% - 430px + 50px);
+  }
+  body { --sidebar-w: 200px; }
+  .app-main {
+    margin-left: var(--sidebar-w);
+    max-width: none;
+    width: calc(100% - var(--sidebar-w));
+  }
+  .app-main > * {
+    max-width: 860px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .bottom-nav {
+    top: 0;
+    bottom: 0;
+    right: auto;
+    width: var(--sidebar-w);
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 4px;
+    padding: 76px 12px 12px;
+    border-top: none;
+    border-right: 1px solid var(--border);
+  }
+  .nav-btn {
+    flex: none;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-size: 14px;
+  }
+  .nav-btn.active {
+    background: var(--surface-2);
+  }
+  .nav-icon { font-size: 18px; }
+  .topbar {
+    padding-left: calc(var(--sidebar-w) + 24px);
+    z-index: 11;
+  }
+  .thin-banner { padding-left: calc(var(--sidebar-w) + 24px); }
+  .index-strip { grid-template-columns: repeat(3, minmax(0, 220px)); }
+}

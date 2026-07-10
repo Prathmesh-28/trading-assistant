@@ -1,4 +1,4 @@
-import type { BacktestJob, ChartData, HistoryRow, Snapshot, TunableSettings } from "./types";
+import type { BacktestJob, ChartData, HistoryRow, IndexQuote, MarketData, Snapshot, TunableSettings } from "./types";
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -80,6 +80,8 @@ export const api = {
       "/api/settings",
       { method: "PATCH", body: JSON.stringify({ settings }) },
     ),
+  market: (group: "watchlist" | "nifty50") => req<MarketData>(`/api/market?group=${group}`),
+  indices: () => req<{ indices: IndexQuote[] }>("/api/indices"),
   logout: () => req("/api/logout", { method: "POST" }).catch(() => {}),
 };
 

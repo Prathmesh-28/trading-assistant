@@ -332,6 +332,64 @@ async def resume():
     return await _run_command("resume", [])
 
 
+# ------------------------------------------------------------------ markets
+
+from universe import INDICES, NAMES, group_symbols  # noqa: E402
+
+_market_cache: dict = {}   # key -> (fetched_at, payload)
+_MARKET_TTL = 30.0
+
+
+def _fetch_market(group: str) -> dict:
+    """Sync — run in a thread. Quotes for a whole symbol group, fail-soft per
+    symbol so one bad name never empties the list."""
+    symbols = group_symbols(group, engine.s.watchlist)
+    quotes = {}
+    for sym in symbols:
+        try:
+            snap = engine.feed.get_quote_snapshot(sym)
+        except Exception:  # noqa: BLE001
+            snap = None
+        if snap:
+            snap["name"] = NAMES.get(sym, sym)
+            quotes[sym] = snap
+    return {"group": group, "quotes": quotes,
+            "synthetic": bool(getattr(engine.feed, "synthetic", False))}
+
+
+def _fetch_indices() -> dict:
+    out = []
+    for sym, label, exchange in INDICES:
+        try:
+            snap = engine.feed.get_index_quote(sym, exchange)
+        except Exception:  # noqa: BLE001
+            snap = None
+        if snap:
+            out.append({"symbol": sym, "label": label, **snap})
+    return {"indices": out}
+
+
+async def _cached(key: str, fetcher) -> dict:
+    hit = _market_cache.get(key)
+    if hit and time.time() - hit[0] < _MARKET_TTL:
+        return hit[1]
+    payload = await asyncio.to_thread(fetcher)
+    _market_cache[key] = (time.time(), payload)
+    return payload
+
+
+@app.get("/api/market")
+async def market(group: str = "watchlist"):
+    if group not in ("watchlist", "nifty50"):
+        raise HTTPException(400, "group must be watchlist or nifty50")
+    return await _cached(f"market:{group}", lambda: _fetch_market(group))
+
+
+@app.get("/api/indices")
+async def indices():
+    return await _cached("indices", _fetch_indices)
+
+
 # ------------------------------------------------------------------ chart data
 
 _chart_cache: dict = {}  # (symbol, interval, days) -> (fetched_at, payload)
