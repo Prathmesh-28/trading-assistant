@@ -235,6 +235,7 @@ async def health():
         "version": VERSION,
         "engine": {
             "last_tick_age_s": tick_age,
+            "latency": engine.latency,
             "positions": len(engine.active),
             "pending": len(engine.pending),
             "paused": engine.paused,
@@ -325,6 +326,16 @@ async def watch_position(symbol: str, body: WatchBody):
 @app.post("/api/ideas/{symbol}/execute")
 async def execute_idea(symbol: str):
     reply = await engine.execute_idea(symbol.upper())
+    return {"reply": reply, "ok": not reply.startswith("❌"), "status": engine.snapshot()}
+
+
+class ArmBody(BaseModel):
+    on: bool
+
+
+@app.post("/api/positions/{symbol}/arm")
+async def arm_position(symbol: str, body: ArmBody):
+    reply = engine.arm_auto_exit(symbol.upper(), body.on)
     return {"reply": reply, "ok": not reply.startswith("❌"), "status": engine.snapshot()}
 
 
@@ -475,6 +486,33 @@ async def suggestions(group: str = "watchlist"):
     if group not in ("watchlist", "nifty50", "nasdaq100"):
         raise HTTPException(400, "bad group")
     return await _cached(f"suggest:{group}", lambda: _fetch_suggestions(group))
+
+
+# ------------------------------------------------------------------ fundamentals
+
+from fundamentals import fetch_fundamentals  # noqa: E402
+from universe import NASDAQ100  # noqa: E402
+
+_US_SET = {sym for sym, _ in NASDAQ100}
+_FUND_TTL = 6 * 3600.0
+
+
+def _fetch_fund(symbol: str) -> dict:
+    market = "US" if symbol in _US_SET else "IN"
+    data = fetch_fundamentals(symbol, market)
+    return data or {"symbol": symbol, "error": "no fundamentals available"}
+
+
+@app.get("/api/fundamentals/{symbol}")
+async def fundamentals_ep(symbol: str):
+    sym = symbol.upper()
+    key = f"fund:{sym}"
+    hit = _market_cache.get(key)
+    if hit and time.time() - hit[0] < _FUND_TTL:
+        return hit[1]
+    payload = await asyncio.to_thread(_fetch_fund, sym)
+    _market_cache[key] = (time.time(), payload)
+    return payload
 
 
 # ------------------------------------------------------------------ chart data

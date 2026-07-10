@@ -22,6 +22,7 @@ export interface Idea {
   exit_price: number;
   ltp: number;
   pnl: number;
+  auto_exit?: boolean;
 }
 
 export interface MarketContext {

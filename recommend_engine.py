@@ -48,6 +48,7 @@ class Position:
     alerted_giveback: bool = False   # winner gave back >50% of its peak
     alerted_timestop: bool = False   # stagnant positional past the time stop
     peak_pnl: float = 0.0
+    auto_exit: bool = False   # armed: bot sells INSTANTLY when stop is touched
     # R-unit for the alerts above — captured at tracking start, BEFORE any
     # trailing: once the stop moves to break-even, entry-to-stop is 0 and
     # every risk-based threshold would silently die with it
@@ -74,6 +75,9 @@ class RecommendEngine:
         self._exit_review_done = None
         self._rotation_done_month = None
         self.last_tick_at: float = 0.0   # data_loop liveness (epoch); watchdog + /api/health read it
+        self._loop = None                # event loop, for thread-safe fast ticks
+        self.latency = {"fast_ticks": 0, "tick_to_decision_ms": None,
+                        "order_rtt_ms": None, "source": "poll"}
         self._apply_setting_overrides()
         # Wallet: ONE pool of capital shared by you and the bot. First boot
         # seeds it with CAPITAL as an opening deposit; after that the ledger
@@ -116,6 +120,102 @@ class RecommendEngine:
     def _wallet_sell(self, symbol: str, qty: int, price: float, note: str = "") -> None:
         self.cash = self.journal.wallet_record("sell", round(qty * price, 2),
                                                symbol, qty, price, note)
+
+    # ---------------------------------------------------- fast path (<200ms)
+    # AlphaGrep-style hot loop at personal scale: ticks arrive by push (Groww
+    # WebSocket live; 1s synthetic ticker in demo), each tick is checked
+    # against armed stops IMMEDIATELY, and an armed position fires a market
+    # order in the same breath. Latency is measured end to end.
+
+    def on_fast_tick(self, sym: str, ltp: float, recv_ts: float) -> None:
+        """THREAD-SAFE entry: called from the feed thread. Schedules the async
+        handler on the engine loop without blocking the feed."""
+        if self._loop is None:
+            return
+        asyncio.run_coroutine_threadsafe(self._fast_tick(sym, ltp, recv_ts), self._loop)
+
+    async def _fast_tick(self, sym: str, ltp: float, recv_ts: float) -> None:
+        import time as _time
+        self.last_ltp[sym] = ltp
+        self.latency["fast_ticks"] += 1
+        pos = self.active.get(sym)
+        if not pos or pos.alerted_stop:
+            return
+        r = pos.rec
+        hit_stop = ltp <= r.stop if r.is_long else ltp >= r.stop
+        if not hit_stop:
+            return
+        decided = _time.time()
+        self.latency["tick_to_decision_ms"] = round((decided - recv_ts) * 1000, 1)
+        if pos.auto_exit and (self._paper() or self.s.execute_enabled):
+            reply = await self.execute_exit(sym)
+            self.latency["order_rtt_ms"] = round((_time.time() - decided) * 1000, 1)
+            log.info("AUTO-EXIT %s: decision %.1fms, order %.1fms — %s", sym,
+                     self.latency["tick_to_decision_ms"], self.latency["order_rtt_ms"],
+                     reply[:60])
+        else:
+            await self.monitor()  # normal alert path, still faster than the poll
+
+    async def fast_loop(self) -> None:
+        """Push-based ticks. Live: GrowwFeed WebSocket (real-time LTP for the
+        watchlist + everything held). Demo: 1s ticker over active positions so
+        the identical code path is exercised without creds."""
+        import time as _time
+        if self._paper():
+            self.latency["source"] = "demo-1s"
+            while True:
+                await asyncio.sleep(1.0)
+                for sym in list(self.active):
+                    tick = self.feed.get_tick(sym)
+                    if tick:
+                        await self._fast_tick(sym, tick.ltp, _time.time())
+        else:
+            try:
+                from growwapi import GrowwFeed
+                feed = GrowwFeed(self.feed.api)
+                self.latency["source"] = "groww-websocket"
+
+                def _on_data():
+                    now = _time.time()
+                    try:
+                        data = feed.get_ltp() or {}
+                        # payload nests by segment/exchange; walk to symbol: ltp
+                        for seg in data.values():
+                            for exch in (seg or {}).values():
+                                for sym, q in (exch or {}).items():
+                                    px = (q or {}).get("ltp") or (q or {}).get("last_price")
+                                    if px:
+                                        self.on_fast_tick(str(sym).upper(), float(px), now)
+                    except Exception:  # noqa: BLE001 — one bad frame ≠ dead feed
+                        log.exception("fast feed frame failed")
+
+                def _run():
+                    symbols = sorted(set(self.s.watchlist) | set(self.active))
+                    instruments = [{"exchange": "NSE", "segment": "CASH",
+                                    "trading_symbol": s} for s in symbols]
+                    feed.subscribe_ltp(instruments, on_data_received=_on_data)
+                    feed.consume()  # blocking websocket loop
+
+                await asyncio.to_thread(_run)
+                log.warning("GrowwFeed consume() returned — restarting via supervisor")
+                raise RuntimeError("feed ended")
+            except ImportError:
+                log.warning("GrowwFeed unavailable — fast path disabled, polling only")
+                while True:
+                    await asyncio.sleep(3600)
+
+    def arm_auto_exit(self, sym: str, on: bool) -> str:
+        pos = self.active.get(sym)
+        if not pos:
+            return f"{sym} isn't being tracked."
+        if on and not self._paper() and not self.s.execute_enabled:
+            return "❌ Turn on 'Bot places orders' in Settings first."
+        pos.auto_exit = on
+        self._emit_snapshot()
+        if on:
+            return (f"🛡 {sym}: ARMED — the bot sells the instant "
+                    f"₹{pos.rec.stop:,.2f} is touched.")
+        return f"🛡 {sym}: auto-sell off — you'll get an alert instead."
 
     # ---------------------------------------------------------- execution
     # The bot places an order ONLY when you explicitly tell it to (a tap or a
@@ -338,7 +438,8 @@ class RecommendEngine:
             },
             "pending": [rec.to_dict(self.last_ltp.get(rec.symbol))
                        for rec, _ in self.pending.values()],
-            "positions": [pos.rec.to_dict(self.last_ltp.get(sym))
+            "positions": [{**pos.rec.to_dict(self.last_ltp.get(sym)),
+                           "auto_exit": pos.auto_exit}
                          for sym, pos in self.active.items()],
             "day_stats": self.journal.day_stats(),
             "wallet": self.wallet_view(),
@@ -601,7 +702,7 @@ class RecommendEngine:
     # every connected dashboard client (and, symmetrically, are reachable from
     # either Telegram or the web UI so both surfaces always agree).
     _MUTATING = {"pause", "resume", "bought", "skip", "sold", "watch",
-                 "execute", "exit", "deposit", "withdraw"}
+                 "execute", "exit", "deposit", "withdraw", "arm", "disarm"}
 
     async def handle_command(self, cmd: str, args: list[str]) -> str:
         reply = await self._dispatch_command(cmd, args)
@@ -646,6 +747,10 @@ class RecommendEngine:
                 return f"Usage: /{cmd} AMOUNT"
             return (self.wallet_deposit(amount) if cmd == "deposit"
                     else self.wallet_withdraw(amount))
+        if cmd in ("arm", "disarm"):
+            if not args:
+                return f"Usage: /{cmd} SYMBOL"
+            return self.arm_auto_exit(args[0].upper(), cmd == "arm")
         if cmd in ("bought", "skip", "sold", "watch", "execute", "exit"):
             if not args:
                 return f"Usage: /{cmd} SYMBOL …"
@@ -968,6 +1073,7 @@ class RecommendEngine:
                 f"{len(pending_rows)} pending idea(s). Monitoring resumed.")
 
     async def run(self) -> None:
+        self._loop = asyncio.get_running_loop()
         restored = self._restore_state()
         if restored:
             await self.notifier.send(restored)
@@ -987,6 +1093,7 @@ class RecommendEngine:
             self._supervise("context_loop", self.context_loop),
             self._supervise("positional_loop", self.positional_loop),
             self._supervise("watchdog_loop", self.watchdog_loop),
+            self._supervise("fast_loop", self.fast_loop),
         ]
         if self.notifier.enabled:
             tasks.append(self._supervise("command_loop", self.notifier.command_loop))

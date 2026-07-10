@@ -96,6 +96,24 @@ export function PositionRow({ idea, execute }: { idea: Idea; execute?: { enabled
             </label>
           </div>
           {execute?.enabled && (
+            <label className="toggle-row" style={{ marginBottom: 8 }}>
+              <div>
+                <strong>🛡 Auto-sell at stop</strong>
+                <p className="text-muted" style={{ margin: 0, fontSize: 11 }}>
+                  Bot fires the sell order the instant ₹{idea.stop.toLocaleString("en-IN")} is touched
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={Boolean(idea.auto_exit)}
+                onChange={async (e) => {
+                  const r = await api.armPosition(idea.symbol, e.target.checked).catch(() => null);
+                  if (r) toast(r.ok ? "success" : "warning", r.reply);
+                }}
+              />
+            </label>
+          )}
+          {execute?.enabled && (
             <button className="btn-big btn-bot" disabled={busy} onClick={botSell}>
               ⚡ Sell now with bot{execute.paper ? " (practice)" : ""}
             </button>

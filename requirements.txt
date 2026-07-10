@@ -2,6 +2,7 @@ httpx>=0.27
 python-dotenv>=1.0
 pyotp>=2.9
 growwapi==1.5.0   # adapter verified against this exact version's signatures
+yfinance>=0.2.40   # company fundamentals (NSE .NS + US tickers)
 fastapi>=0.115
 uvicorn[standard]>=0.32
 # psycopg[binary]>=3.1   # uncomment for the Postgres journal / dashboard
