@@ -89,6 +89,13 @@ class Settings:
     # is the Nifty 50 ETF, so it flows through the normal equity data path.
     index_symbol: str = field(default_factory=lambda: _s("INDEX_SYMBOL", "NIFTYBEES"))
 
+    # Fundamental gate for POSITIONAL (multi-week) ideas — quality filter on
+    # top of the technical setup. Off by default (needs fundamentals data);
+    # fails OPEN when a symbol's fundamentals are unavailable.
+    fundamental_gate_enabled: bool = field(default_factory=lambda: _b("FUNDAMENTAL_GATE", False))
+    min_fundamental_score: float = field(default_factory=lambda: _f("MIN_FUNDAMENTAL_SCORE", 45))
+    max_fundamental_de: float = field(default_factory=lambda: _f("MAX_FUNDAMENTAL_DE", 200))
+
     # screener.in scraping (operator-owned ToS decision; default OFF). When
     # on, fundamentals prefer screener.in and fall back to yfinance.
     screener_scrape_enabled: bool = field(default_factory=lambda: _b("SCREENER_SCRAPE_ENABLED", False))

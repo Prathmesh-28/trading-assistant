@@ -137,6 +137,73 @@ class RecommendEngine:
         dd = 1 - self.equity() / peak
         return round(self.s.risk_per_trade_pct * (0.5 if dd > 0.08 else 1.0), 3)
 
+    _fund_cache: dict = {}   # symbol -> (ts, merged fundamentals+quant dict)
+
+    def _fundamentals_for(self, symbol: str) -> dict:
+        """Merged fundamentals + quant for one symbol (deep-dive context on a
+        positional idea). Heavy (yfinance/screener) — 6h cached, fail-soft to
+        {}. Called via asyncio.to_thread so the engine loop never blocks."""
+        import time as _time
+        hit = self._fund_cache.get(symbol)
+        if hit and _time.time() - hit[0] < 6 * 3600:
+            return hit[1]
+        merged = {}
+        try:
+            from fundamentals import fetch_fundamentals
+            from universe import NASDAQ100
+            us = {s for s, _ in NASDAQ100}
+            f = fetch_fundamentals(symbol, "US" if symbol in us else "IN")
+            if f:
+                merged.update({k: v for k, v in f.items() if v is not None})
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from quant import quant_stats
+            candles = self.feed.get_chart_candles(symbol, 1440, 400)
+            if len(candles) >= 60:
+                idx = self.feed.get_chart_candles(self.s.index_symbol, 1440, 400)
+                q = quant_stats(candles, idx)
+                if "error" not in q:
+                    merged.setdefault("quant_score", q.get("score"))
+                    for k in ("mom_3m_pct", "ann_vol_pct", "sharpe_1y"):
+                        merged.setdefault(k, q.get(k))
+        except Exception:  # noqa: BLE001
+            pass
+        self._fund_cache[symbol] = (_time.time(), merged)
+        return merged
+
+    def _fundamental_gate(self, symbol: str, fund: dict) -> str:
+        """Quality veto for positional ideas. Returns '' (pass) or a reason.
+        Fails OPEN: missing data never blocks a technically-valid idea."""
+        if not self.s.fundamental_gate_enabled or not fund:
+            return ""
+        score = fund.get("fundamental_score")
+        de = fund.get("debt_to_equity")
+        if score is not None and score < self.s.min_fundamental_score:
+            return f"fundamental score {score} < {self.s.min_fundamental_score:.0f} min"
+        if de is not None and de > self.s.max_fundamental_de:
+            return f"debt/equity {de} > {self.s.max_fundamental_de:.0f} cap"
+        return ""
+
+    def _why_line(self, sig, fund: dict) -> str:
+        """Deterministic one-liner blending the technical trigger with quant +
+        fundamental context — the 'why' shown on the idea."""
+        bits = [sig.reason]
+        q = fund.get("quant_score")
+        if q is not None:
+            bits.append(f"quant {q}/100")
+        fs = fund.get("fundamental_score")
+        if fs is not None:
+            roe = fund.get("roe_pct")
+            de = fund.get("debt_to_equity")
+            extra = []
+            if roe is not None:
+                extra.append(f"ROE {roe}%")
+            if de is not None:
+                extra.append(f"D/E {de}")
+            bits.append(f"fundamentals {fs}/100" + (f" ({', '.join(extra)})" if extra else ""))
+        return " · ".join(bits)
+
     def _day_pnl(self) -> float:
         realized = self.journal.day_stats().get("realised_pnl", 0.0)
         open_pnl = sum(p.rec.pnl(self.last_ltp.get(s, p.rec.fill_price or p.rec.entry))
@@ -477,6 +544,9 @@ class RecommendEngine:
         "max_open_positions": int,
         "max_portfolio_risk_pct": float,
         "daily_loss_limit_pct": float,
+        "fundamental_gate_enabled": bool,
+        "min_fundamental_score": float,
+        "max_fundamental_de": float,
     }
 
     def _apply_setting_overrides(self) -> None:
@@ -527,6 +597,8 @@ class RecommendEngine:
                     "max_open_positions": (1, 25),
                     "max_portfolio_risk_pct": (0.5, 25.0),
                     "daily_loss_limit_pct": (0.5, 20.0),
+                    "min_fundamental_score": (0.0, 100.0),
+                    "max_fundamental_de": (10.0, 1000.0),
                 }[key]
                 if not (limits[0] <= value <= limits[1]):
                     return f"{key} must be between {limits[0]} and {limits[1]}"
@@ -625,10 +697,18 @@ class RecommendEngine:
         if not ok:
             log.info("%s signal skipped — %s", sig.symbol, reason)
             return
+        fund = {}
+        if sig.horizon == Horizon.POSITIONAL:
+            fund = await asyncio.to_thread(self._fundamentals_for, sig.symbol)
+            gate = self._fundamental_gate(sig.symbol, fund)
+            if gate:
+                log.info("%s positional idea vetoed — %s", sig.symbol, gate)
+                return
         rec = Recommendation(
             symbol=sig.symbol, side=sig.side, horizon=sig.horizon,
             entry=sig.entry, stop=sig.stop, target=sig.target,
             qty=qty, confidence=sig.confidence, reason=sig.reason,
+            why=self._why_line(sig, fund),
         )
         corr = await self._correlation_note(rec.symbol)
         row = self.journal.record(rec)
@@ -798,6 +878,19 @@ class RecommendEngine:
             reasons.append(f"{days_held} days held for <0.5R progress — capital is idle")
             if verdict == "hold":
                 verdict = "exit"
+
+        # 4. fundamental deterioration (deep-dive): a held name whose books have
+        # gone red is a tighten/exit reason even if price hasn't broken yet.
+        fund = self._fundamentals_for(sym)
+        roe, de = fund.get("roe_pct"), fund.get("debt_to_equity")
+        if roe is not None and roe < 0:
+            reasons.append(f"fundamentals: ROE now negative ({roe}%)")
+            verdict = "exit"
+        elif de is not None and de > self.s.max_fundamental_de:
+            reasons.append(f"fundamentals: debt/equity {de} above your {self.s.max_fundamental_de:.0f} cap")
+            if verdict == "hold":
+                verdict = "tighten"
+
         if not reasons:
             reasons.append("trend intact, stop unchanged")
         return verdict, reasons
