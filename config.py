@@ -68,6 +68,12 @@ class Settings:
     max_position_value: float = field(default_factory=lambda: _f("MAX_POSITION_VALUE", 50_000.0))
     allow_shorts: bool = field(default_factory=lambda: _b("ALLOW_SHORTS", False))
 
+    # One-tap execution: when true, the engine may place REAL orders through
+    # Groww when (and only when) you explicitly tell it to — per idea, per
+    # exit, or per manual ticket. Recommend-only remains the default. In
+    # synthetic/demo mode orders are always paper-filled regardless.
+    execute_enabled: bool = field(default_factory=lambda: _b("EXECUTE_ENABLED", False))
+
     # Portfolio-level risk (Van Tharp / Turtle heat caps): cap concurrent
     # positions and total open risk (sum of entry-to-stop risk across open
     # positions) as % of capital, on top of per-trade sizing above.

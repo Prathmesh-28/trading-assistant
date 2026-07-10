@@ -3,6 +3,7 @@ import type { MarketStatus, Snapshot } from "../types";
 import { IdeaCard } from "../components/IdeaCard";
 import { IndexStrip } from "../components/IndexStrip";
 import { PositionRow } from "../components/PositionRow";
+import { WalletCard } from "../components/WalletCard";
 
 /** The home screen. One question, answered top-to-bottom:
  * "Do I need to do anything right now?"
@@ -24,6 +25,7 @@ export function Today({ snapshot, market }: { snapshot: Snapshot; market: Market
 
   return (
     <div className="today">
+      <WalletCard wallet={snapshot.wallet} paper={snapshot.execute.paper} />
       <IndexStrip />
       {closed && nothingOn && (
         <div className="closed-hero">
@@ -41,7 +43,7 @@ export function Today({ snapshot, market }: { snapshot: Snapshot; market: Market
             👋 Needs your decision <span className="count-pill">{snapshot.pending.length}</span>
           </h2>
           {snapshot.pending.map((idea) => (
-            <IdeaCard key={idea.idea_id} idea={idea} />
+            <IdeaCard key={idea.idea_id} idea={idea} execute={snapshot.execute} />
           ))}
         </section>
       )}
@@ -52,7 +54,7 @@ export function Today({ snapshot, market }: { snapshot: Snapshot; market: Market
             👁 Being watched for you <span className="count-pill">{positions.length}</span>
           </h2>
           {positions.map((idea) => (
-            <PositionRow key={idea.idea_id} idea={idea} />
+            <PositionRow key={idea.idea_id} idea={idea} execute={snapshot.execute} />
           ))}
         </section>
       )}

@@ -322,6 +322,51 @@ async def watch_position(symbol: str, body: WatchBody):
     return await _run_command("watch", args)
 
 
+@app.post("/api/ideas/{symbol}/execute")
+async def execute_idea(symbol: str):
+    reply = await engine.execute_idea(symbol.upper())
+    return {"reply": reply, "ok": not reply.startswith("❌"), "status": engine.snapshot()}
+
+
+@app.post("/api/positions/{symbol}/exit")
+async def execute_exit(symbol: str):
+    reply = await engine.execute_exit(symbol.upper())
+    return {"reply": reply, "ok": not reply.startswith("❌"), "status": engine.snapshot()}
+
+
+class OrderBody(BaseModel):
+    qty: int
+    stop: float
+    target: Optional[float] = None
+
+
+@app.post("/api/order/{symbol}")
+async def manual_order(symbol: str, body: OrderBody):
+    reply = await engine.place_manual_order(symbol.upper(), body.qty, body.stop, body.target)
+    return {"reply": reply, "ok": not reply.startswith("❌"), "status": engine.snapshot()}
+
+
+class AmountBody(BaseModel):
+    amount: float
+
+
+@app.get("/api/wallet")
+async def wallet():
+    return {"wallet": engine.wallet_view(), "txns": engine.journal.wallet_txns(50)}
+
+
+@app.post("/api/wallet/deposit")
+async def wallet_deposit(body: AmountBody):
+    reply = engine.wallet_deposit(body.amount)
+    return {"reply": reply, "ok": not reply.startswith("❌"), "wallet": engine.wallet_view()}
+
+
+@app.post("/api/wallet/withdraw")
+async def wallet_withdraw(body: AmountBody):
+    reply = engine.wallet_withdraw(body.amount)
+    return {"reply": reply, "ok": not reply.startswith("❌"), "wallet": engine.wallet_view()}
+
+
 @app.post("/api/pause")
 async def pause():
     return await _run_command("pause", [])

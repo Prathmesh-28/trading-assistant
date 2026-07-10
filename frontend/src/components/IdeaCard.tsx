@@ -6,7 +6,7 @@ import type { Idea } from "../types";
 
 /** A new trade idea, redesigned to read top-to-bottom like a sentence:
  * what to buy → at what levels → what it costs/risks → confirm or ignore. */
-export function IdeaCard({ idea }: { idea: Idea }) {
+export function IdeaCard({ idea, execute }: { idea: Idea; execute?: { enabled: boolean; paper: boolean } }) {
   const [qty, setQty] = useState(String(idea.qty));
   const [price, setPrice] = useState(String(idea.entry));
   const [busy, setBusy] = useState(false);
@@ -33,6 +33,18 @@ export function IdeaCard({ idea }: { idea: Idea }) {
       toast("success", `Got it — watching ${idea.symbol} for you now.`);
     } catch {
       toast("danger", `Couldn't save that — check your connection and tap again.`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const botBuy = async () => {
+    setBusy(true);
+    try {
+      const r = await api.executeIdea(idea.symbol);
+      toast(r.ok ? "success" : "warning", r.reply);
+    } catch {
+      toast("danger", "Order failed — check the connection and retry.");
     } finally {
       setBusy(false);
     }
@@ -81,13 +93,20 @@ export function IdeaCard({ idea }: { idea: Idea }) {
       {(idea.why || idea.reason) && <p className="idea-why">{idea.why || idea.reason}</p>}
 
       {!confirming ? (
-        <div className="idea-buttons">
-          <button className="btn-big btn-buy" onClick={() => setConfirming(true)}>
-            I bought this
-          </button>
-          <button className="btn-big btn-ignore" disabled={busy} onClick={skip}>
-            Ignore
-          </button>
+        <div className="idea-stack">
+          {execute?.enabled && (
+            <button className="btn-big btn-bot" disabled={busy} onClick={botBuy}>
+              ⚡ Buy with wallet{execute.paper ? " (practice)" : ""}
+            </button>
+          )}
+          <div className="idea-buttons">
+            <button className="btn-big btn-buy" onClick={() => setConfirming(true)}>
+              I bought it myself
+            </button>
+            <button className="btn-big btn-ignore" disabled={busy} onClick={skip}>
+              Ignore
+            </button>
+          </div>
         </div>
       ) : (
         <div className="confirm-box">

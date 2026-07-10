@@ -50,8 +50,18 @@ export interface MarketStatus {
   next_close: string | null;
 }
 
+export interface Wallet {
+  cash: number;
+  invested: number;
+  equity: number;
+  open_pnl: number;
+  current_value: number;
+}
+
 export interface Snapshot {
   mode: "LIVE" | "SYNTHETIC";
+  wallet: Wallet;
+  execute: { enabled: boolean; paper: boolean };
   paused: boolean;
   watchlist: string[];
   context: MarketContext;
@@ -173,6 +183,7 @@ export interface BacktestJob {
 /* ---------- runtime settings ---------- */
 
 export interface TunableSettings {
+  execute_enabled: boolean;
   watchlist: string[];
   risk_per_trade_pct: number;
   capital: number;

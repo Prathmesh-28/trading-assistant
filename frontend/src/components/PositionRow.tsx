@@ -6,7 +6,7 @@ import type { Idea } from "../types";
 
 /** One position you hold: name, live PnL in big type, and a visual bar
  * showing where price sits between your sell-stop and your profit goal. */
-export function PositionRow({ idea }: { idea: Idea }) {
+export function PositionRow({ idea, execute }: { idea: Idea; execute?: { enabled: boolean; paper: boolean } }) {
   const [expanded, setExpanded] = useState(false);
   const [price, setPrice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -17,6 +17,18 @@ export function PositionRow({ idea }: { idea: Idea }) {
   const entryPct = entryMark(idea) * 100;
   const hitStop = idea.ltp <= idea.stop;
   const hitTarget = idea.ltp >= idea.target;
+
+  const botSell = async () => {
+    setBusy(true);
+    try {
+      const r = await api.exitPosition(idea.symbol);
+      toast(r.ok ? "success" : "warning", r.reply);
+    } catch {
+      toast("danger", "Sell order failed — retry.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const sell = async () => {
     const p = price ? Number(price) : undefined;
@@ -83,8 +95,13 @@ export function PositionRow({ idea }: { idea: Idea }) {
               />
             </label>
           </div>
+          {execute?.enabled && (
+            <button className="btn-big btn-bot" disabled={busy} onClick={botSell}>
+              ⚡ Sell now with bot{execute.paper ? " (practice)" : ""}
+            </button>
+          )}
           <button className="btn-big btn-sell" disabled={busy} onClick={sell}>
-            {busy ? "Saving…" : "I sold this — book it"}
+            {busy ? "Saving…" : "I sold it myself — book it"}
           </button>
         </div>
       )}

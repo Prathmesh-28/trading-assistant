@@ -6,14 +6,19 @@ NSE equities, monitors your open positions live, trails stops, and tells you
 from your phone) and a **live web dashboard** (buy/sell with a tap, live
 charts, watch positions update in real time). Everything is **100%
 deterministic rules** — no LLM, no ML in the loop — so every signal is
-backtestable and explainable. The bot never places an order; you do.
+backtestable and explainable. Orders happen ONE of two ways, always your call: you place them yourself in your broker app, or you tap ⚡ and the bot places that one order for you through Groww (off by default; demo mode always paper-fills).
 
-## Two modes
-- **recommend** (default) — `recommend_engine.py` / `server.py`. Ideas are
-  pushed to you; **the app places no orders**. This is the "I trade manually"
-  model.
-- **execute** (optional) — `orchestrator.py`. The app auto-places orders
-  (`LIVE=false` is a dry run). Only for when you want full automation.
+## Wallet & how orders happen
+One pool of capital, like a broker wallet: deposit money (practice money in
+demo), every buy debits it, every sell credits it, and the bot sizes ideas off
+live equity so gains compound. Three ways to trade, strictest first:
+- **You trade manually** (default) — ideas arrive, you place orders in your
+  broker app and confirm with /bought /sold or a tap.
+- **⚡ Bot trades when told** — set `EXECUTE_ENABLED=true` (or the Settings
+  toggle): tapping ⚡ on an idea/position or the Markets buy ticket makes the
+  bot place THAT one market order via Groww. Never on its own initiative.
+- **execute mode** (`orchestrator.py`) — full auto-placement of every signal
+  (`LIVE=false` dry-runs). Separate entrypoint, separate decision.
 
 ## Strategies
 - **Intraday (MIS):** opening-range breakout (SSRN 4729284 rules) with

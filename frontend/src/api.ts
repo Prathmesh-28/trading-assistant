@@ -1,4 +1,4 @@
-import type { BacktestJob, ChartData, HistoryRow, IndexQuote, MarketData, Snapshot, TunableSettings } from "./types";
+import type { BacktestJob, ChartData, HistoryRow, IndexQuote, MarketData, Snapshot, TunableSettings, Wallet } from "./types";
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -82,6 +82,26 @@ export const api = {
     ),
   market: (group: "watchlist" | "nifty50") => req<MarketData>(`/api/market?group=${group}`),
   indices: () => req<{ indices: IndexQuote[] }>("/api/indices"),
+  executeIdea: (symbol: string) =>
+    req<{ reply: string; ok: boolean }>(`/api/ideas/${symbol}/execute`, { method: "POST" }),
+  exitPosition: (symbol: string) =>
+    req<{ reply: string; ok: boolean }>(`/api/positions/${symbol}/exit`, { method: "POST" }),
+  placeOrder: (symbol: string, qty: number, stop: number, target?: number) =>
+    req<{ reply: string; ok: boolean }>(`/api/order/${symbol}`, {
+      method: "POST",
+      body: JSON.stringify({ qty, stop, target }),
+    }),
+  wallet: () => req<{ wallet: Wallet; txns: Record<string, unknown>[] }>("/api/wallet"),
+  walletDeposit: (amount: number) =>
+    req<{ reply: string; ok: boolean; wallet: Wallet }>("/api/wallet/deposit", {
+      method: "POST",
+      body: JSON.stringify({ amount }),
+    }),
+  walletWithdraw: (amount: number) =>
+    req<{ reply: string; ok: boolean; wallet: Wallet }>("/api/wallet/withdraw", {
+      method: "POST",
+      body: JSON.stringify({ amount }),
+    }),
   logout: () => req("/api/logout", { method: "POST" }).catch(() => {}),
 };
 

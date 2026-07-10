@@ -22,6 +22,20 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 """
 
+_WALLET_SCHEMA = """
+CREATE TABLE IF NOT EXISTS wallet_txns (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts            TEXT NOT NULL,
+    kind          TEXT NOT NULL,   -- deposit | withdraw | buy | sell
+    symbol        TEXT,
+    qty           INTEGER,
+    price         REAL,
+    amount        REAL NOT NULL,   -- signed: +credit / -debit to cash
+    balance_after REAL NOT NULL,
+    note          TEXT
+);
+"""
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS ideas (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,7 +73,44 @@ class Journal:
         self._conn = sqlite3.connect(settings.journal_path, check_same_thread=False)
         self._conn.execute(_SCHEMA)
         self._conn.execute(_SETTINGS_SCHEMA)
+        self._conn.execute(_WALLET_SCHEMA)
         self._conn.commit()
+
+    # ------------------------------------------------------------- wallet
+
+    def wallet_balance(self) -> float:
+        """Available cash: sum of every signed ledger entry."""
+        with self._lock:
+            row = self._conn.execute("SELECT COALESCE(SUM(amount), 0) FROM wallet_txns").fetchone()
+        return round(row[0], 2)
+
+    def wallet_has_txns(self) -> bool:
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM wallet_txns").fetchone()[0] > 0
+
+    def wallet_record(self, kind: str, amount: float, symbol: str = None,
+                      qty: int = None, price: float = None, note: str = "") -> float:
+        """Append one signed ledger entry; returns the new balance."""
+        with self._lock:
+            row = self._conn.execute("SELECT COALESCE(SUM(amount), 0) FROM wallet_txns").fetchone()
+            balance = round(row[0] + amount, 2)
+            self._conn.execute(
+                "INSERT INTO wallet_txns (ts, kind, symbol, qty, price, amount,"
+                " balance_after, note) VALUES (?,?,?,?,?,?,?,?)",
+                (datetime.now(IST).isoformat(), kind, symbol, qty, price,
+                 round(amount, 2), balance, note),
+            )
+            self._conn.commit()
+        return balance
+
+    def wallet_txns(self, limit: int = 50) -> list[dict]:
+        cols = ["id", "ts", "kind", "symbol", "qty", "price", "amount", "balance_after", "note"]
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT {', '.join(cols)} FROM wallet_txns ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(zip(cols, r)) for r in rows]
 
     def load_setting_overrides(self) -> dict:
         """User-tuned runtime settings (dashboard Settings tab). Applied on top

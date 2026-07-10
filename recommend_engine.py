@@ -75,11 +75,177 @@ class RecommendEngine:
         self._rotation_done_month = None
         self.last_tick_at: float = 0.0   # data_loop liveness (epoch); watchdog + /api/health read it
         self._apply_setting_overrides()
+        # Wallet: ONE pool of capital shared by you and the bot. First boot
+        # seeds it with CAPITAL as an opening deposit; after that the ledger
+        # is the truth and CAPITAL is ignored for cash.
+        if not self.journal.wallet_has_txns():
+            self.journal.wallet_record("deposit", self.s.capital,
+                                       note="opening balance (CAPITAL)")
+        self.cash: float = self.journal.wallet_balance()
         self.notifier.on_command(self.handle_command)
+
+    # ------------------------------------------------------------- wallet
+
+    def invested_value(self) -> float:
+        """₹ locked in open positions at their fill prices."""
+        return round(sum((p.rec.fill_price or p.rec.entry) * (p.rec.fill_qty or p.rec.qty)
+                         for p in self.active.values()), 2)
+
+    def equity(self) -> float:
+        """Cash + invested — the bot sizes trades off this, so profits compound
+        and losses shrink future size, exactly like a real account."""
+        return round(self.cash + self.invested_value(), 2)
+
+    def wallet_view(self) -> dict:
+        invested = self.invested_value()
+        open_pnl = round(sum(p.rec.pnl(self.last_ltp.get(s, p.rec.fill_price or p.rec.entry))
+                             for s, p in self.active.items()), 2)
+        return {"cash": round(self.cash, 2), "invested": invested,
+                "equity": self.equity(), "open_pnl": open_pnl,
+                "current_value": round(self.cash + invested + open_pnl, 2)}
+
+    def _wallet_buy(self, symbol: str, qty: int, price: float, note: str = "") -> str:
+        """Debit cash for a fill. Returns '' or the rejection reason."""
+        cost = round(qty * price, 2)
+        if cost > self.cash + 0.01:
+            return (f"Not enough wallet cash: need ₹{cost:,.2f}, have ₹{self.cash:,.2f}. "
+                    f"Add money or reduce quantity.")
+        self.cash = self.journal.wallet_record("buy", -cost, symbol, qty, price, note)
+        return ""
+
+    def _wallet_sell(self, symbol: str, qty: int, price: float, note: str = "") -> None:
+        self.cash = self.journal.wallet_record("sell", round(qty * price, 2),
+                                               symbol, qty, price, note)
+
+    # ---------------------------------------------------------- execution
+    # The bot places an order ONLY when you explicitly tell it to (a tap or a
+    # /execute command). Demo mode always paper-fills at the live demo price;
+    # live mode sends a real market order through Groww. Wallet accounting is
+    # identical either way — one pool of capital.
+
+    def _paper(self) -> bool:
+        return bool(getattr(self.feed, "synthetic", False))
+
+    def _fill_price(self, symbol: str, fallback: float) -> float:
+        px = self.last_ltp.get(symbol)
+        if px:
+            return px
+        try:
+            snap = self.feed.get_quote_snapshot(symbol)
+            if snap and snap.get("ltp"):
+                return float(snap["ltp"])
+        except Exception:  # noqa: BLE001
+            pass
+        return fallback
+
+    async def execute_idea(self, sym: str) -> str:
+        """You tapped 'Buy via bot' on a pending idea."""
+        if sym not in self.pending:
+            return f"No pending idea for {sym}."
+        if not self._paper() and not self.s.execute_enabled:
+            return ("❌ Bot ordering is OFF. Turn on 'Bot places orders' in "
+                    "Settings first (More → Settings).")
+        rec, _row = self.pending[sym]
+        product = "MIS" if rec.horizon == Horizon.INTRADAY else "CNC"
+        price = self._fill_price(sym, rec.entry)
+        if self._paper():
+            note = "PAPER order (demo)"
+        else:
+            order_id = await asyncio.to_thread(
+                self.feed.place_order, sym, "BUY", rec.qty, product)
+            if not order_id:
+                return f"❌ Groww rejected the {sym} order — check the app/logs."
+            note = f"Groww order {order_id}"
+        reply = await self._cmd_bought(sym, [str(rec.qty), str(price)])
+        if reply.startswith("❌"):
+            return reply
+        self._emit_snapshot()
+        await self._alert("success", sym,
+                          f"⚡ Bot bought {sym}: {rec.qty} @ ~₹{price:,.2f} ({note}). "
+                          f"Stop ₹{rec.stop:,.2f} · target ₹{rec.target:,.2f}. I'm watching it.",
+                          f"Bot bought {sym} {rec.qty} @ ~₹{price:,.2f} ({note})")
+        return f"⚡ Done — bought {sym} ({note})."
+
+    async def execute_exit(self, sym: str) -> str:
+        """You tapped 'Sell now via bot' on an open position."""
+        if sym not in self.active:
+            return f"{sym} isn't being tracked."
+        if not self._paper() and not self.s.execute_enabled:
+            return ("❌ Bot ordering is OFF. Turn on 'Bot places orders' in "
+                    "Settings first (More → Settings).")
+        rec = self.active[sym].rec
+        product = "MIS" if rec.horizon == Horizon.INTRADAY else "CNC"
+        price = self._fill_price(sym, rec.fill_price or rec.entry)
+        if self._paper():
+            note = "PAPER order (demo)"
+        else:
+            order_id = await asyncio.to_thread(
+                self.feed.place_order, sym, "SELL", rec.fill_qty, product)
+            if not order_id:
+                return f"❌ Groww rejected the {sym} sell — check the app/logs."
+            note = f"Groww order {order_id}"
+        reply = self._cmd_sold(sym, [str(price)])
+        self._emit_snapshot()
+        await self._alert("info", sym, f"⚡ Bot sold {sym} @ ~₹{price:,.2f} ({note}).",
+                          f"Bot sold {sym} @ ~₹{price:,.2f} ({note})")
+        return f"⚡ {reply} ({note})"
+
+    async def place_manual_order(self, sym: str, qty: int, stop: float,
+                                 target: float = None) -> str:
+        """Groww-style order ticket from the Markets tab: buy any stock with
+        wallet money; the bot tracks it like any other position."""
+        sym = sym.upper()
+        if sym in self.active or sym in self.pending:
+            return f"❌ {sym} is already open or pending."
+        if qty <= 0:
+            return "❌ Quantity must be positive."
+        price = self._fill_price(sym, 0.0)
+        if price <= 0:
+            return f"❌ No price available for {sym} — is the symbol right?"
+        if stop >= price:
+            return f"❌ Stop ₹{stop:,.2f} must be below the price ₹{price:,.2f}."
+        if not self._paper() and not self.s.execute_enabled:
+            return ("❌ Bot ordering is OFF. Turn on 'Bot places orders' in "
+                    "Settings first (More → Settings).")
+        if self._paper():
+            note = "PAPER order (demo)"
+        else:
+            order_id = await asyncio.to_thread(
+                self.feed.place_order, sym, "BUY", qty, "CNC")
+            if not order_id:
+                return f"❌ Groww rejected the {sym} order — check the app/logs."
+            note = f"Groww order {order_id}"
+        tgt = target if target else round(price + 2 * (price - stop), 2)
+        reply = self._cmd_watch(sym, [str(qty), str(price), str(stop), str(tgt)])
+        if reply.startswith("❌"):
+            return reply
+        self._emit_snapshot()
+        await self._alert("success", sym,
+                          f"⚡ Bought {sym}: {qty} @ ~₹{price:,.2f} ({note}). "
+                          f"Stop ₹{stop:,.2f} · target ₹{tgt:,.2f}. I'm watching it.",
+                          f"Bought {sym} {qty} @ ~₹{price:,.2f} ({note})")
+        return f"⚡ {reply} ({note})"
+
+    def wallet_deposit(self, amount: float) -> str:
+        if not (1 <= amount <= 1e9):
+            return "❌ Amount must be between ₹1 and ₹100 crore."
+        self.cash = self.journal.wallet_record("deposit", round(amount, 2), note="user deposit")
+        self._emit_snapshot()
+        return f"💰 Added ₹{amount:,.2f}. Wallet cash: ₹{self.cash:,.2f}."
+
+    def wallet_withdraw(self, amount: float) -> str:
+        if amount <= 0:
+            return "❌ Amount must be positive."
+        if amount > self.cash:
+            return f"❌ Only ₹{self.cash:,.2f} is free to withdraw (rest is invested)."
+        self.cash = self.journal.wallet_record("withdraw", -round(amount, 2), note="user withdrawal")
+        self._emit_snapshot()
+        return f"💸 Withdrew ₹{amount:,.2f}. Wallet cash: ₹{self.cash:,.2f}."
 
     # Runtime-tunable settings (dashboard Settings tab). Whitelist keeps the
     # PATCH surface away from credentials and structural config.
     TUNABLE = {
+        "execute_enabled": bool,
         "watchlist": list,
         "risk_per_trade_pct": float,
         "capital": float,
@@ -101,6 +267,8 @@ class RecommendEngine:
             try:
                 if caster is list:
                     value = [str(s).strip().upper() for s in value if str(s).strip()]
+                elif caster is bool:
+                    value = bool(value)
                 else:
                     value = caster(value)
                 setattr(self.s, key, value)
@@ -122,6 +290,9 @@ class RecommendEngine:
                 if any(not s.replace("&", "").replace("-", "").isalnum() or len(s) > 20
                        for s in value):
                     return "symbols must be alphanumeric NSE codes"
+            elif caster is bool:
+                if not isinstance(value, bool):
+                    return f"{key} must be true or false"
             else:
                 value = caster(value)
                 limits = {
@@ -170,6 +341,9 @@ class RecommendEngine:
             "positions": [pos.rec.to_dict(self.last_ltp.get(sym))
                          for sym, pos in self.active.items()],
             "day_stats": self.journal.day_stats(),
+            "wallet": self.wallet_view(),
+            "execute": {"enabled": bool(self.s.execute_enabled) or self._paper(),
+                        "paper": self._paper()},
             "market": market_phase(datetime.now(IST)),
             "quotes": self._quotes(),
             "server_time": datetime.now(IST).isoformat(),
@@ -210,7 +384,7 @@ class RecommendEngine:
         return risk
 
     async def publish(self, sig: Signal) -> None:
-        qty = suggested_qty(sig.entry, sig.stop, self.s)
+        qty = suggested_qty(sig.entry, sig.stop, self.s, capital=self.equity())
         if qty <= 0:
             log.info("%s signal skipped — qty 0 under current risk settings", sig.symbol)
             return
@@ -218,7 +392,7 @@ class RecommendEngine:
             len(self.active) + len(self.pending),
             self._open_risk(),
             abs(sig.entry - sig.stop) * qty,
-            self.s,
+            self.s, capital=self.equity(),
         )
         if not ok:
             log.info("%s signal skipped — %s", sig.symbol, reason)
@@ -426,7 +600,8 @@ class RecommendEngine:
     # Commands that change state — the ones that must push a fresh snapshot to
     # every connected dashboard client (and, symmetrically, are reachable from
     # either Telegram or the web UI so both surfaces always agree).
-    _MUTATING = {"pause", "resume", "bought", "skip", "sold", "watch"}
+    _MUTATING = {"pause", "resume", "bought", "skip", "sold", "watch",
+                 "execute", "exit", "deposit", "withdraw"}
 
     async def handle_command(self, cmd: str, args: list[str]) -> str:
         reply = await self._dispatch_command(cmd, args)
@@ -443,6 +618,9 @@ class RecommendEngine:
                 "/sold SYMBOL [price] – you exited; books PnL\n"
                 "/skip SYMBOL – dismiss a pending idea\n"
                 "/watch SYMBOL QTY PRICE STOP [TARGET] – monitor a manual trade\n"
+                "/execute SYMBOL – bot BUYS a pending idea for you\n"
+                "/exit SYMBOL – bot SELLS an open position for you\n"
+                "/wallet · /deposit AMT · /withdraw AMT – your capital\n"
                 "/pause · /resume – stop/restart new ideas"
             )
         if cmd == "pause":
@@ -455,7 +633,20 @@ class RecommendEngine:
             return self._status_text()
         if cmd == "positions":
             return self._positions_text()
-        if cmd in ("bought", "skip", "sold", "watch"):
+        if cmd == "wallet":
+            w = self.wallet_view()
+            return (f"💰 Wallet\nCash free: ₹{w['cash']:,.2f}\n"
+                    f"Invested: ₹{w['invested']:,.2f}\n"
+                    f"Open PnL: ₹{w['open_pnl']:,.2f}\n"
+                    f"Total value: ₹{w['current_value']:,.2f}")
+        if cmd in ("deposit", "withdraw"):
+            try:
+                amount = float(args[0])
+            except (IndexError, ValueError):
+                return f"Usage: /{cmd} AMOUNT"
+            return (self.wallet_deposit(amount) if cmd == "deposit"
+                    else self.wallet_withdraw(amount))
+        if cmd in ("bought", "skip", "sold", "watch", "execute", "exit"):
             if not args:
                 return f"Usage: /{cmd} SYMBOL …"
             sym = args[0].upper()
@@ -465,6 +656,10 @@ class RecommendEngine:
                 return self._cmd_skip(sym)
             if cmd == "sold":
                 return self._cmd_sold(sym, args[1:])
+            if cmd == "execute":
+                return await self.execute_idea(sym)
+            if cmd == "exit":
+                return await self.execute_exit(sym)
             return self._cmd_watch(sym, args[1:])
         return "Unknown command — /help"
 
@@ -477,6 +672,10 @@ class RecommendEngine:
         rec, row = self.pending.pop(sym)
         rec.fill_qty = int(float(rest[0])) if rest else rec.qty
         rec.fill_price = float(rest[1]) if len(rest) > 1 else rec.entry
+        err = self._wallet_buy(sym, rec.fill_qty, rec.fill_price, "confirmed fill")
+        if err:
+            self.pending[sym] = (rec, row)  # idea stays pending
+            return f"❌ {err}"
         rec.status = Status.ACTIVE
         self.journal.update(row, rec)
         self.active[sym] = Position(rec, row)
@@ -502,6 +701,7 @@ class RecommendEngine:
         pnl = round((rec.exit_price - rec.fill_price) * rec.fill_qty * direction, 2)
         rec.status = Status.CLOSED
         self.journal.update(pos.row_id, rec, pnl)
+        self._wallet_sell(sym, rec.fill_qty, rec.exit_price, "position closed")
         emoji = "🟢" if pnl >= 0 else "🔴"
         self._emit("alert", {
             "level": "success" if pnl >= 0 else "danger", "symbol": sym,
@@ -521,6 +721,9 @@ class RecommendEngine:
             confidence="—", reason="manual trade via /watch",
             status=Status.ACTIVE, fill_qty=qty, fill_price=price,
         )
+        err = self._wallet_buy(sym, qty, price, "manual buy")
+        if err:
+            return f"❌ {err}"
         row = self.journal.record(rec)
         self.journal.update(row, rec)  # record() doesn't persist fill fields — a restart must restore them
         self.active[sym] = Position(rec, row)

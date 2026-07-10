@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { useState as useStateReact } from "react";
 import { api } from "../api";
+import { toast } from "../toast";
 import { ChartPanel } from "../components/ChartPanel";
 import { IndexStrip } from "../components/IndexStrip";
 import type { MarketData, Snapshot } from "../types";
@@ -52,12 +54,19 @@ export function Markets({ snapshot, prices }: { snapshot: Snapshot; prices: Reco
   }, [data]);
 
   if (selected) {
+    const q = data?.quotes[selected];
     return (
       <div className="markets">
         <button className="back-link" onClick={() => setSelected("")}>
           ‹ All stocks
         </button>
         <ChartPanel symbol={selected} snapshot={snapshot} prices={prices} />
+        <OrderTicket
+          symbol={selected}
+          ltp={prices[selected] ?? q?.ltp ?? 0}
+          execute={snapshot.execute}
+          cash={snapshot.wallet.cash}
+        />
       </div>
     );
   }
@@ -134,6 +143,89 @@ export function Markets({ snapshot, prices }: { snapshot: Snapshot; prices: Reco
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+
+function OrderTicket({
+  symbol,
+  ltp,
+  execute,
+  cash,
+}: {
+  symbol: string;
+  ltp: number;
+  execute: { enabled: boolean; paper: boolean };
+  cash: number;
+}) {
+  const [qty, setQty] = useStateReact("");
+  const [stop, setStop] = useStateReact("");
+  const [busy, setBusy] = useStateReact(false);
+  const q = Number(qty);
+  const s = Number(stop);
+  const cost = Number.isFinite(q) && q > 0 && ltp > 0 ? q * ltp : 0;
+
+  const buy = async () => {
+    if (!Number.isFinite(q) || q <= 0 || !Number.isInteger(q)) {
+      toast("warning", "Shares must be a positive whole number.");
+      return;
+    }
+    if (!Number.isFinite(s) || s <= 0 || s >= ltp) {
+      toast("warning", `Your sell-if-falls price must be below the current ₹${ltp}.`);
+      return;
+    }
+    if (cost > cash) {
+      toast("warning", `That costs ₹${cost.toLocaleString("en-IN")} but only ₹${cash.toLocaleString("en-IN")} is free.`);
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await api.placeOrder(symbol, q, s);
+      toast(r.ok ? "success" : "warning", r.reply);
+      if (r.ok) {
+        setQty("");
+        setStop("");
+      }
+    } catch {
+      toast("danger", "Order failed — check the connection and retry.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!execute.enabled) {
+    return (
+      <p className="ticket-off text-muted">
+        Want to buy {symbol} from here? Turn on "Bot places orders" under More → Settings.
+      </p>
+    );
+  }
+
+  return (
+    <div className="order-ticket">
+      <p className="ticket-title">
+        Buy {symbol}
+        {execute.paper ? " (practice money)" : ""} — ₹{cash.toLocaleString("en-IN")} free
+      </p>
+      <div className="confirm-fields">
+        <label>
+          Shares
+          <input type="number" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} />
+        </label>
+        <label>
+          Sell if it falls to (₹)
+          <input type="number" inputMode="decimal" value={stop} onChange={(e) => setStop(e.target.value)} />
+        </label>
+      </div>
+      {cost > 0 && (
+        <p className="ticket-cost">
+          Cost ~₹{cost.toLocaleString("en-IN", { maximumFractionDigits: 0 })} at ₹{ltp.toLocaleString("en-IN")}
+        </p>
+      )}
+      <button className="btn-big btn-bot" disabled={busy} onClick={buy}>
+        {busy ? "Placing…" : `⚡ Buy with wallet`}
+      </button>
     </div>
   );
 }

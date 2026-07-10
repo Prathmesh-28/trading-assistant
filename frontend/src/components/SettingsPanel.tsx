@@ -99,6 +99,25 @@ export function SettingsPanel() {
       </section>
 
       <section className="section">
+        <h2>Bot trading</h2>
+        <label className="toggle-row">
+          <div>
+            <strong>Bot places orders</strong>
+            <p className="text-muted settings-hint" style={{ margin: 0 }}>
+              When ON, the ⚡ buttons and the Markets buy ticket send real orders through
+              Groww (in demo mode they're always practice fills).
+            </p>
+          </div>
+          <input
+            type="checkbox"
+            checked={Boolean(settings.execute_enabled)}
+            disabled={busy}
+            onChange={(e) => save({ execute_enabled: e.target.checked })}
+          />
+        </label>
+      </section>
+
+      <section className="section">
         <h2>Risk</h2>
         {NUM_FIELDS.map((f) => (
           <label key={f.key} className="settings-field">
