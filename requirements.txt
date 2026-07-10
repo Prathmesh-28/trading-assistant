@@ -3,7 +3,7 @@ python-dotenv>=1.0
 pyotp>=2.9
 growwapi==1.5.0   # adapter verified against this exact version's signatures
 yfinance>=0.2.40   # company fundamentals (NSE .NS + US tickers)
-beautifulsoup4>=4.12   # screener.in HTML parsing (optional adapter)
+openpyxl>=3.1   # screener.in Excel-export parsing (optional adapter)
 fastapi>=0.115
 uvicorn[standard]>=0.32
 # psycopg[binary]>=3.1   # uncomment for the Postgres journal / dashboard
