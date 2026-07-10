@@ -8,18 +8,23 @@ const STEPS = [
   },
   {
     icon: "🏠",
-    title: "Today — start here every day",
-    body: "Anything needing your decision appears at the top. Below it: positions being watched with a bar showing how close price is to your sell level or profit goal.",
+    title: "Home — start here every day",
+    body: "Your wallet on top, then anything needing a decision, then positions being watched — each with a bar showing how close price is to your sell level or profit goal.",
   },
   {
     icon: "📈",
     title: "Markets — browse & buy anything",
-    body: "NIFTY, SENSEX, all NIFTY 50 stocks with live prices. Tap a stock for its chart, and buy with your wallet right from there.",
+    body: "NIFTY, SENSEX, all NIFTY 50 and US stocks. Tap any stock for its chart, score, full financials (who owns it, quarterly results), and a buy ticket.",
+  },
+  {
+    icon: "🔎",
+    title: "Screener — find your next stock",
+    body: "Ten ready-made lenses — Quality, Value, Coffee Can, Promoter skin-in-game… The engine scans real fundamentals and ranks what passes. Tap a match to open it.",
   },
   {
     icon: "💰",
     title: "Your wallet is the money",
-    body: "Add money on Today (practice money in demo). Every buy uses it, every sell returns it with profit or loss. The bot can never spend more than what's in it.",
+    body: "Add money on Home (practice money in demo). Every buy uses it, every sell returns it with profit or loss. The bot can never spend more than what's in it.",
   },
 ] as const;
 

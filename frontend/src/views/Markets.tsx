@@ -67,20 +67,14 @@ export function Markets({ snapshot, prices, jumpSymbol, onConsumeJump }: { snaps
   if (selected) {
     const q = data?.quotes[selected];
     return (
-      <div className="markets">
-        <button className="back-link" onClick={() => setSelected("")}>
-          ‹ All stocks
-        </button>
-        <ChartPanel symbol={selected} snapshot={snapshot} prices={prices} />
-        <QuantCard symbol={selected} />
-        <FundamentalsCard symbol={selected} />
-        <OrderTicket
-          symbol={selected}
-          ltp={prices[selected] ?? q?.ltp ?? 0}
-          execute={snapshot.execute ?? { enabled: false, paper: snapshot.mode !== "LIVE" }}
-          cash={snapshot.wallet?.cash ?? 0}
-        />
-      </div>
+      <StockPage
+        symbol={selected}
+        quote={q}
+        live={prices[selected]}
+        snapshot={snapshot}
+        prices={prices}
+        onBack={() => setSelected("")}
+      />
     );
   }
 
@@ -266,6 +260,80 @@ function OrderTicket({
       <button className="btn-big btn-bot" disabled={busy} onClick={buy}>
         {busy ? "Placing…" : `⚡ Buy with wallet`}
       </button>
+    </div>
+  );
+}
+
+
+function StockPage({
+  symbol,
+  quote,
+  live,
+  snapshot,
+  prices,
+  onBack,
+}: {
+  symbol: string;
+  quote?: MarketData["quotes"][string];
+  live?: number;
+  snapshot: Snapshot;
+  prices: Record<string, number>;
+  onBack: () => void;
+}) {
+  const [stab, setStab] = useStateReact<"about" | "financials" | "trade">("about");
+  const price = live ?? quote?.ltp ?? 0;
+  const chg = quote?.change_pct ?? null;
+  const held = snapshot.positions.find((p) => p.symbol === symbol);
+
+  return (
+    <div className="stock-page">
+      <div className="stock-head">
+        <button className="back-link" onClick={onBack}>‹ Markets</button>
+        <div className="stock-head-main">
+          <div>
+            <h1>{symbol}</h1>
+            {quote?.name && <span className="stock-head-name">{quote.name}</span>}
+          </div>
+          <div className="stock-head-price">
+            {price > 0 && <strong>₹{price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</strong>}
+            {chg !== null && (
+              <span className={`chg-chip ${chg >= 0 ? "chip-good" : "chip-bad"}`}>
+                {chg >= 0 ? "▲" : "▼"} {Math.abs(chg)}%
+              </span>
+            )}
+          </div>
+        </div>
+        {held && (
+          <p className="stock-held-note">
+            You hold {held.fill_qty ?? held.qty} shares — the bot is watching its exit on Home.
+          </p>
+        )}
+      </div>
+
+      <ChartPanel symbol={symbol} snapshot={snapshot} prices={prices} />
+
+      <div className="seg-control" role="tablist">
+        <button role="tab" className={stab === "about" ? "active" : ""} onClick={() => setStab("about")}>
+          Score
+        </button>
+        <button role="tab" className={stab === "financials" ? "active" : ""} onClick={() => setStab("financials")}>
+          Financials
+        </button>
+        <button role="tab" className={stab === "trade" ? "active" : ""} onClick={() => setStab("trade")}>
+          Trade
+        </button>
+      </div>
+
+      {stab === "about" && <QuantCard symbol={symbol} />}
+      {stab === "financials" && <FundamentalsCard symbol={symbol} />}
+      {stab === "trade" && (
+        <OrderTicket
+          symbol={symbol}
+          ltp={price}
+          execute={snapshot.execute ?? { enabled: false, paper: snapshot.mode !== "LIVE" }}
+          cash={snapshot.wallet?.cash ?? 0}
+        />
+      )}
     </div>
   );
 }

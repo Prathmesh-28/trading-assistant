@@ -26,8 +26,29 @@ export function Today({ snapshot, market, onBrowse }: { snapshot: Snapshot; mark
 
   return (
     <div className="today">
-      {snapshot.wallet && <WalletCard wallet={snapshot.wallet} paper={exec.paper} />}
-      <IndexStrip />
+      <aside className="today-rail">
+        {snapshot.wallet && <WalletCard wallet={snapshot.wallet} paper={exec.paper} />}
+        <IndexStrip />
+        <section className="today-block rail-summary">
+          <h2 className="today-heading">Today so far</h2>
+          <div className="today-summary">
+            <div>
+              <span className="sum-label">Booked profit/loss</span>
+              <strong className={pnl >= 0 ? "good" : "critical"}>
+                {pnl >= 0 ? "+" : ""}
+                {rupees(pnl, 0)}
+              </strong>
+            </div>
+            <div>
+              <span className="sum-label">Trades closed</span>
+              <strong>{snapshot.day_stats.closed_today}</strong>
+            </div>
+          </div>
+          {regimeLabel(snapshot.context) && <p className="mood-line">{regimeLabel(snapshot.context)}</p>}
+        </section>
+      </aside>
+
+      <div className="today-main">
       {closed && nothingOn && (
         <div className="closed-hero">
           <p className="closed-title">{marketLine(m)}</p>
@@ -80,23 +101,7 @@ export function Today({ snapshot, market, onBrowse }: { snapshot: Snapshot; mark
         </div>
       )}
 
-      <section className="today-block">
-        <h2 className="today-heading">Today so far</h2>
-        <div className="today-summary">
-          <div>
-            <span className="sum-label">Booked profit/loss</span>
-            <strong className={pnl >= 0 ? "good" : "critical"}>
-              {pnl >= 0 ? "+" : ""}
-              {rupees(pnl, 0)}
-            </strong>
-          </div>
-          <div>
-            <span className="sum-label">Trades closed</span>
-            <strong>{snapshot.day_stats.closed_today}</strong>
-          </div>
-        </div>
-        {regimeLabel(snapshot.context) && <p className="mood-line">{regimeLabel(snapshot.context)}</p>}
-      </section>
+      </div>
     </div>
   );
 }

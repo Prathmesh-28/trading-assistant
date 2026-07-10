@@ -11,15 +11,17 @@ import { Welcome } from "./components/Welcome";
 import { Markets } from "./views/Markets";
 import { Journal } from "./views/Journal";
 import { More } from "./views/More";
+import { Screener } from "./views/Screener";
 import { Today } from "./views/Today";
 import type { AlertLevel, HistoryRow } from "./types";
 import { useLive } from "./useLive";
 
-type Tab = "today" | "chart" | "journal" | "more";
+type Tab = "today" | "chart" | "screener" | "journal" | "more";
 
 const TABS: { key: Tab; icon: string; label: string }[] = [
-  { key: "today", icon: "🏠", label: "Today" },
+  { key: "today", icon: "🏠", label: "Home" },
   { key: "chart", icon: "📈", label: "Markets" },
+  { key: "screener", icon: "🔎", label: "Screener" },
   { key: "journal", icon: "📒", label: "Journal" },
   { key: "more", icon: "☰", label: "More" },
 ];
@@ -100,6 +102,11 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 
       <header className="topbar">
         <span className="topbar-title">Trading Assistant</span>
+        {snapshot.wallet && (
+          <span className="topbar-equity" title="Wallet total (cash + stocks)">
+            ₹{Math.round(snapshot.wallet.current_value).toLocaleString("en-IN")}
+          </span>
+        )}
         <span className={`status-pill ${live ? "pill-live" : "pill-demo"}`}>
           <span className={`conn-dot ${connected ? "conn-on" : "conn-off"}`} />
           {live ? "LIVE" : "DEMO"} · {marketLine(m).replace("Market is ", "").replace("Market ", "")}
@@ -121,6 +128,9 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       <main className="app-main">
         {tab === "today" && <Today snapshot={snapshot} market={market} onBrowse={() => setTab("chart")} />}
         {tab === "chart" && <Markets snapshot={snapshot} prices={prices} jumpSymbol={jumpSymbol} onConsumeJump={() => setJumpSymbol("")} />}
+        {tab === "screener" && (
+          <Screener onOpen={(sym) => { setJumpSymbol(sym); setTab("chart"); }} />
+        )}
         {tab === "journal" && <Journal rows={history} />}
         {tab === "more" && (
           <More
@@ -128,7 +138,6 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             onLogout={onLogout}
             paused={snapshot.paused}
             onTogglePause={() => (snapshot.paused ? api.resume() : api.pause())}
-            onOpenSymbol={(sym) => { setJumpSymbol(sym); setTab("chart"); }}
           />
         )}
       </main>
