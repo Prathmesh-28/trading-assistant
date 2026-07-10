@@ -78,6 +78,9 @@ class RecommendEngine:
         self._loop = None                # event loop, for thread-safe fast ticks
         self.latency = {"fast_ticks": 0, "tick_to_decision_ms": None,
                         "order_rtt_ms": None, "source": "poll"}
+        self._order_times: list = []      # OPS/rate guard (SEBI-friendly)
+        self._last_order: dict = {}       # (sym, side) -> ts, duplicate debounce
+        self._breaker_tripped_on = None   # date the daily-loss breaker fired
         self._apply_setting_overrides()
         # Wallet: ONE pool of capital shared by you and the bot. First boot
         # seeds it with CAPITAL as an opening deposit; after that the ledger
@@ -107,6 +110,118 @@ class RecommendEngine:
         return {"cash": round(self.cash, 2), "invested": invested,
                 "equity": self.equity(), "open_pnl": open_pnl,
                 "current_value": round(self.cash + invested + open_pnl, 2)}
+
+    # -------------------------------------------- institutional risk layer
+
+    def _equity_peak(self) -> float:
+        try:
+            peak = float(self.journal.load_setting_overrides().get("equity_peak", 0) or 0)
+        except Exception:  # noqa: BLE001
+            peak = 0.0
+        eq = self.equity()
+        if eq > peak:
+            peak = eq
+            try:
+                self.journal.save_setting_override("equity_peak", peak)
+            except Exception:  # noqa: BLE001
+                pass
+        return peak
+
+    def effective_risk_pct(self) -> float:
+        """Drawdown de-risking: beyond 8% equity drawdown from the all-time
+        peak, cut per-trade risk in half until the account recovers — the
+        standard prop-desk drawdown policy."""
+        peak = self._equity_peak()
+        if peak <= 0:
+            return self.s.risk_per_trade_pct
+        dd = 1 - self.equity() / peak
+        return round(self.s.risk_per_trade_pct * (0.5 if dd > 0.08 else 1.0), 3)
+
+    def _day_pnl(self) -> float:
+        realized = self.journal.day_stats().get("realised_pnl", 0.0)
+        open_pnl = sum(p.rec.pnl(self.last_ltp.get(s, p.rec.fill_price or p.rec.entry))
+                       for s, p in self.active.items())
+        return realized + open_pnl
+
+    async def _check_breaker(self) -> None:
+        """Daily-loss circuit breaker: auto-pause NEW ideas for the rest of the
+        day once the day's total loss crosses the limit. Monitoring continues."""
+        today = datetime.now(IST).date()
+        if self.paused or self._breaker_tripped_on == today:
+            return
+        limit = self.equity() * self.s.daily_loss_limit_pct / 100.0
+        pnl = self._day_pnl()
+        if pnl < -limit:
+            self._breaker_tripped_on = today
+            self.paused = True
+            await self._alert(
+                "danger", "",
+                f"🛑 CIRCUIT BREAKER: today's PnL ₹{pnl:,.0f} crossed the "
+                f"-{self.s.daily_loss_limit_pct}% daily limit (₹{limit:,.0f}). "
+                "New ideas are PAUSED for today — open positions stay monitored. "
+                "/resume to override.",
+                f"Circuit breaker: day PnL ₹{pnl:,.0f} — new ideas paused",
+            )
+            self._emit_snapshot()
+
+    def _order_guard(self, sym: str, side: str, price: float = None) -> str:
+        """Pre-trade checks every bot order passes (SEBI-friendly): rate limit
+        well under the 10-orders/sec retail threshold, duplicate debounce,
+        market hours (live only), and a ±10%% price-band sanity check."""
+        import time as _time
+        now = _time.time()
+        self._order_times = [t for t in self._order_times if now - t < 60]
+        if len([t for t in self._order_times if now - t < 1]) >= 2:
+            return "rate limit: max 2 bot orders per second"
+        if len(self._order_times) >= 10:
+            return "rate limit: max 10 bot orders per minute"
+        last = self._last_order.get((sym, side))
+        if last and now - last < 5:
+            return f"duplicate guard: {side} {sym} was ordered {now - last:.0f}s ago"
+        if not self._paper() and not market_is_open(datetime.now(IST)):
+            return "market is closed — live orders refused"
+        pc = self.prev_close.get(sym)
+        if price and pc and abs(price / pc - 1) > 0.10:
+            return (f"price band: ₹{price:,.2f} is >10% from yesterday's "
+                    f"₹{pc:,.2f} — refusing (circuit risk)")
+        self._order_times.append(now)
+        self._last_order[(sym, side)] = now
+        return ""
+
+    async def _correlation_note(self, sym: str) -> str:
+        """Warn when a new idea moves with something already held (>0.8 corr
+        of 60d returns) — you'd be doubling the same bet."""
+        if not self.active:
+            return ""
+        try:
+            def corr_check():
+                import math
+                def rets(cs):
+                    xs = [c["close"] for c in cs][-61:]
+                    return [(xs[i] - xs[i-1]) / xs[i-1] for i in range(1, len(xs)) if xs[i-1]]
+                a = rets(self.feed.get_chart_candles(sym, 1440, 90))
+                worst, worst_sym = 0.0, ""
+                for held in list(self.active):
+                    b = rets(self.feed.get_chart_candles(held, 1440, 90))
+                    n = min(len(a), len(b))
+                    if n < 30:
+                        continue
+                    x, y = a[-n:], b[-n:]
+                    mx, my = sum(x)/n, sum(y)/n
+                    sx = math.sqrt(sum((v-mx)**2 for v in x))
+                    sy = math.sqrt(sum((v-my)**2 for v in y))
+                    if sx and sy:
+                        c = sum((x[i]-mx)*(y[i]-my) for i in range(n)) / (sx*sy)
+                        if c > worst:
+                            worst, worst_sym = c, held
+                return worst, worst_sym
+            worst, worst_sym = await asyncio.to_thread(corr_check)
+            if worst > 0.8:
+                return (f"\n⚠️ Moves almost identically to {worst_sym} you already "
+                        f"hold (correlation {worst:.2f}) — this doubles that bet.")
+        except Exception:  # noqa: BLE001 — advisory only
+            pass
+        return ""
 
     def _wallet_buy(self, symbol: str, qty: int, price: float, note: str = "") -> str:
         """Debit cash for a fill. Returns '' or the rejection reason."""
@@ -248,6 +363,9 @@ class RecommendEngine:
         rec, _row = self.pending[sym]
         product = "MIS" if rec.horizon == Horizon.INTRADAY else "CNC"
         price = self._fill_price(sym, rec.entry)
+        guard = self._order_guard(sym, "BUY", price)
+        if guard:
+            return f"❌ {guard}"
         if self._paper():
             note = "PAPER order (demo)"
         else:
@@ -276,6 +394,9 @@ class RecommendEngine:
         rec = self.active[sym].rec
         product = "MIS" if rec.horizon == Horizon.INTRADAY else "CNC"
         price = self._fill_price(sym, rec.fill_price or rec.entry)
+        guard = self._order_guard(sym, "SELL", None)
+        if guard:
+            return f"❌ {guard}"
         if self._paper():
             note = "PAPER order (demo)"
         else:
@@ -304,6 +425,9 @@ class RecommendEngine:
             return f"❌ No price available for {sym} — is the symbol right?"
         if stop >= price:
             return f"❌ Stop ₹{stop:,.2f} must be below the price ₹{price:,.2f}."
+        guard = self._order_guard(sym, "BUY", price)
+        if guard:
+            return f"❌ {guard}"
         if not self._paper() and not self.s.execute_enabled:
             return ("❌ Bot ordering is OFF. Turn on 'Bot places orders' in "
                     "Settings first (More → Settings).")
@@ -352,6 +476,7 @@ class RecommendEngine:
         "max_position_value": float,
         "max_open_positions": int,
         "max_portfolio_risk_pct": float,
+        "daily_loss_limit_pct": float,
     }
 
     def _apply_setting_overrides(self) -> None:
@@ -401,6 +526,7 @@ class RecommendEngine:
                     "max_position_value": (1000.0, 1e9),
                     "max_open_positions": (1, 25),
                     "max_portfolio_risk_pct": (0.5, 25.0),
+                    "daily_loss_limit_pct": (0.5, 20.0),
                 }[key]
                 if not (limits[0] <= value <= limits[1]):
                     return f"{key} must be between {limits[0]} and {limits[1]}"
@@ -485,7 +611,8 @@ class RecommendEngine:
         return risk
 
     async def publish(self, sig: Signal) -> None:
-        qty = suggested_qty(sig.entry, sig.stop, self.s, capital=self.equity())
+        qty = suggested_qty(sig.entry, sig.stop, self.s, capital=self.equity(),
+                            risk_pct=self.effective_risk_pct())
         if qty <= 0:
             log.info("%s signal skipped — qty 0 under current risk settings", sig.symbol)
             return
@@ -503,9 +630,10 @@ class RecommendEngine:
             entry=sig.entry, stop=sig.stop, target=sig.target,
             qty=qty, confidence=sig.confidence, reason=sig.reason,
         )
+        corr = await self._correlation_note(rec.symbol)
         row = self.journal.record(rec)
         self.pending[rec.symbol] = (rec, row)
-        await self.notifier.send(rec.format_telegram())
+        await self.notifier.send(rec.format_telegram() + corr)
         self._emit("alert", {"level": "info", "message": f"New idea: {rec.side.value} {rec.symbol}"})
         self._emit_snapshot()
         log.info("idea pushed: %s %s @%.2f", rec.side.value, rec.symbol, rec.entry)
@@ -517,6 +645,7 @@ class RecommendEngine:
         self._emit("alert", {"level": level, "symbol": symbol, "message": short})
 
     async def monitor(self) -> None:
+        await self._check_breaker()
         for sym, pos in list(self.active.items()):
             ltp = self.last_ltp.get(sym)
             if ltp is None:

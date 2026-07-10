@@ -8,7 +8,7 @@ from config import Settings
 
 
 def suggested_qty(entry: float, stop: float, settings: Settings,
-                  capital: float = None) -> int:
+                  capital: float = None, risk_pct: float = None) -> int:
     """Risk-based size: risk RISK_PER_TRADE_PCT of capital between entry and
     stop, capped so the position never exceeds MAX_POSITION_VALUE. Pass the
     live wallet equity as `capital` so size compounds with the account;
@@ -17,7 +17,8 @@ def suggested_qty(entry: float, stop: float, settings: Settings,
     if per_share_risk <= 0 or entry <= 0:
         return 0
     base = capital if capital is not None else settings.capital
-    risk_budget = base * settings.risk_per_trade_pct / 100.0
+    pct = risk_pct if risk_pct is not None else settings.risk_per_trade_pct
+    risk_budget = base * pct / 100.0
     qty = math.floor(risk_budget / per_share_risk)
     qty = min(qty, math.floor(settings.max_position_value / entry))
     return max(qty, 0)

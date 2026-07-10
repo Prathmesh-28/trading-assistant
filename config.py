@@ -74,6 +74,10 @@ class Settings:
     # synthetic/demo mode orders are always paper-filled regardless.
     execute_enabled: bool = field(default_factory=lambda: _b("EXECUTE_ENABLED", False))
 
+    # Circuit breaker: pause NEW ideas for the day once realized+open loss
+    # exceeds this % of equity (monitoring of open positions continues).
+    daily_loss_limit_pct: float = field(default_factory=lambda: _f("DAILY_LOSS_LIMIT_PCT", 3.0))
+
     # Portfolio-level risk (Van Tharp / Turtle heat caps): cap concurrent
     # positions and total open risk (sum of entry-to-stop risk across open
     # positions) as % of capital, on top of per-trade sizing above.
