@@ -404,13 +404,13 @@ def _fetch_market(group: str) -> dict:
 
 def _fetch_indices() -> dict:
     out = []
-    for sym, label, exchange in INDICES:
+    for sym, label, exchange, mkt in INDICES:
         try:
             snap = engine.feed.get_index_quote(sym, exchange)
         except Exception:  # noqa: BLE001
             snap = None
         if snap:
-            out.append({"symbol": sym, "label": label, **snap})
+            out.append({"symbol": sym, "label": label, "market": mkt, **snap})
     return {"indices": out}
 
 
@@ -425,14 +425,56 @@ async def _cached(key: str, fetcher) -> dict:
 
 @app.get("/api/market")
 async def market(group: str = "watchlist"):
-    if group not in ("watchlist", "nifty50"):
-        raise HTTPException(400, "group must be watchlist or nifty50")
+    if group not in ("watchlist", "nifty50", "nasdaq100"):
+        raise HTTPException(400, "group must be watchlist, nifty50 or nasdaq100")
     return await _cached(f"market:{group}", lambda: _fetch_market(group))
 
 
 @app.get("/api/indices")
 async def indices():
     return await _cached("indices", _fetch_indices)
+
+
+# ------------------------------------------------------------------ quant
+
+from quant import quant_stats, rank_suggestions  # noqa: E402
+
+
+def _fetch_quant(symbol: str) -> dict:
+    candles = engine.feed.get_chart_candles(symbol, 1440, 400)
+    idx = engine.feed.get_chart_candles(engine.s.index_symbol, 1440, 400)
+    out = quant_stats(candles, idx)
+    out["symbol"] = symbol
+    out["synthetic"] = bool(getattr(engine.feed, "synthetic", False))
+    return out
+
+
+def _fetch_suggestions(group: str) -> dict:
+    symbols = group_symbols(group, engine.s.watchlist)
+    candles = {}
+    for sym in symbols:
+        try:
+            c = engine.feed.get_chart_candles(sym, 1440, 400)
+        except Exception:  # noqa: BLE001
+            c = []
+        if len(c) >= 60:
+            candles[sym] = c
+    idx = engine.feed.get_chart_candles(engine.s.index_symbol, 1440, 400)
+    picks = rank_suggestions(candles, idx, NAMES, top=5)
+    return {"group": group, "picks": picks,
+            "synthetic": bool(getattr(engine.feed, "synthetic", False))}
+
+
+@app.get("/api/quant/{symbol}")
+async def quant(symbol: str):
+    return await _cached(f"quant:{symbol.upper()}", lambda: _fetch_quant(symbol.upper()))
+
+
+@app.get("/api/suggestions")
+async def suggestions(group: str = "watchlist"):
+    if group not in ("watchlist", "nifty50", "nasdaq100"):
+        raise HTTPException(400, "bad group")
+    return await _cached(f"suggest:{group}", lambda: _fetch_suggestions(group))
 
 
 # ------------------------------------------------------------------ chart data

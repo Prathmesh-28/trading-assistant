@@ -372,7 +372,8 @@ class SyntheticFeed:
                              interval_minutes: int = 5) -> list[dict]:
         return []
 
-    INDEX_BASES = {"NIFTY": 24500.0, "SENSEX": 80500.0, "BANKNIFTY": 52400.0}
+    INDEX_BASES = {"NIFTY": 24500.0, "SENSEX": 80500.0, "BANKNIFTY": 52400.0,
+               "NDX": 21800.0, "SPX": 6100.0, "DJI": 44600.0}
 
     def _demo_quote(self, symbol: str, base: float) -> dict:
         """Deterministic per-symbol daily quote: prev close = base, today's

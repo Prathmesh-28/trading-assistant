@@ -1932,3 +1932,81 @@
   line-height: 1.55;
   color: var(--text-secondary);
 }
+
+/* ---------- quant + picks ---------- */
+
+.index-strip { display: flex; overflow-x: auto; gap: 8px; padding-bottom: 2px; }
+.index-strip .index-card { min-width: 132px; flex-shrink: 0; }
+
+.quant-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+}
+.quant-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.quant-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); }
+.quant-score { font-size: 26px; font-weight: 800; }
+.quant-score em { font-size: 13px; font-style: normal; color: var(--text-muted); }
+.quant-meter {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  margin: 8px 0 10px;
+  overflow: hidden;
+}
+.quant-meter-fill { height: 100%; border-radius: 999px; transition: width 0.5s ease; }
+.quant-verdict { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+.quant-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; }
+.quant-row { display: flex; justify-content: space-between; font-size: 13px; }
+.quant-row span { color: var(--text-muted); }
+.quant-foot { font-size: 11px; margin: 12px 0 0; }
+
+.picks-card {
+  background: var(--surface-1);
+  border: 1px solid color-mix(in srgb, var(--series-blue) 25%, var(--border));
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+.picks-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.picks-head em { font-size: 11px; font-weight: 400; font-style: normal; color: var(--text-muted); }
+.pick-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--gridline);
+  padding: 8px 0;
+  text-align: left;
+  color: var(--text-primary);
+}
+.pick-id { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pick-id strong { font-size: 14px; }
+.pick-id span {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60vw;
+}
+.pick-score {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--series-blue);
+  flex-shrink: 0;
+}

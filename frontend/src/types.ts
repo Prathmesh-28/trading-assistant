@@ -214,3 +214,37 @@ export interface IndexQuote {
   prev_close: number | null;
   change_pct: number | null;
 }
+
+/* ---------- quant ---------- */
+
+export interface QuantStats {
+  symbol: string;
+  synthetic: boolean;
+  error?: string;
+  price?: number;
+  ann_vol_pct?: number | null;
+  atr_pct?: number | null;
+  sharpe_1y?: number | null;
+  max_dd_1y_pct?: number | null;
+  beta?: number | null;
+  mom_1m_pct?: number | null;
+  mom_3m_pct?: number | null;
+  mom_12_1_pct?: number | null;
+  from_52w_high_pct?: number | null;
+  from_52w_low_pct?: number | null;
+  rsi14?: number | null;
+  regime?: string;
+  score?: number;
+  verdict?: string;
+  notes?: string[];
+}
+
+export interface Suggestion {
+  symbol: string;
+  name: string;
+  score: number;
+  price: number;
+  mom_3m_pct: number | null;
+  regime: string;
+  reason: string;
+}

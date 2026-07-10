@@ -1,4 +1,4 @@
-import type { BacktestJob, ChartData, HistoryRow, IndexQuote, MarketData, Snapshot, TunableSettings, Wallet } from "./types";
+import type { BacktestJob, ChartData, HistoryRow, IndexQuote, MarketData, QuantStats, Snapshot, Suggestion, TunableSettings, Wallet } from "./types";
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -80,7 +80,7 @@ export const api = {
       "/api/settings",
       { method: "PATCH", body: JSON.stringify({ settings }) },
     ),
-  market: (group: "watchlist" | "nifty50") => req<MarketData>(`/api/market?group=${group}`),
+  market: (group: "watchlist" | "nifty50" | "nasdaq100") => req<MarketData>(`/api/market?group=${group}`),
   indices: () => req<{ indices: IndexQuote[] }>("/api/indices"),
   executeIdea: (symbol: string) =>
     req<{ reply: string; ok: boolean }>(`/api/ideas/${symbol}/execute`, { method: "POST" }),
@@ -102,6 +102,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ amount }),
     }),
+  quant: (symbol: string) => req<QuantStats>(`/api/quant/${symbol}`),
+  suggestions: (group: string) =>
+    req<{ picks: Suggestion[]; synthetic: boolean }>(`/api/suggestions?group=${group}`),
   logout: () => req("/api/logout", { method: "POST" }).catch(() => {}),
 };
 

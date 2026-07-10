@@ -27,18 +27,44 @@ NIFTY50 = [
     ("LTIM", "LTIMindtree"), ("SHRIRAMFIN", "Shriram Finance"),
 ]
 
+# NASDAQ-100 majors (US market group). Live US quotes/trading need a US
+# broker connection (e.g. Alpaca) — until then these serve demo data only.
+NASDAQ100 = [
+    ("AAPL", "Apple"), ("MSFT", "Microsoft"), ("NVDA", "NVIDIA"),
+    ("GOOGL", "Alphabet"), ("AMZN", "Amazon"), ("META", "Meta Platforms"),
+    ("TSLA", "Tesla"), ("AVGO", "Broadcom"), ("COST", "Costco"),
+    ("NFLX", "Netflix"), ("AMD", "AMD"), ("PEP", "PepsiCo"),
+    ("ADBE", "Adobe"), ("CSCO", "Cisco"), ("QCOM", "Qualcomm"),
+    ("INTC", "Intel"), ("TXN", "Texas Instruments"), ("INTU", "Intuit"),
+    ("AMAT", "Applied Materials"), ("BKNG", "Booking"), ("SBUX", "Starbucks"),
+    ("PYPL", "PayPal"), ("MU", "Micron"), ("LRCX", "Lam Research"),
+    ("ADI", "Analog Devices"), ("REGN", "Regeneron"), ("MDLZ", "Mondelez"),
+    ("GILD", "Gilead"), ("PANW", "Palo Alto Networks"), ("SNPS", "Synopsys"),
+    ("CDNS", "Cadence"), ("MRVL", "Marvell"), ("ORLY", "O'Reilly Auto"),
+    ("CRWD", "CrowdStrike"), ("ABNB", "Airbnb"), ("FTNT", "Fortinet"),
+    ("ADSK", "Autodesk"), ("WDAY", "Workday"), ("TEAM", "Atlassian"),
+    ("DDOG", "Datadog"),
+]
+
 NAMES = dict(NIFTY50)
+NAMES.update(dict(NASDAQ100))
 
 # Indices shown on the dashboard strip. Groww serves NSE indices through the
 # same quote API with these trading symbols; SENSEX is BSE.
+# (symbol, label, exchange, market)
 INDICES = [
-    ("NIFTY", "NIFTY 50", "NSE"),
-    ("SENSEX", "SENSEX", "BSE"),
-    ("BANKNIFTY", "BANK NIFTY", "NSE"),
+    ("NIFTY", "NIFTY 50", "NSE", "IN"),
+    ("SENSEX", "SENSEX", "BSE", "IN"),
+    ("BANKNIFTY", "BANK NIFTY", "NSE", "IN"),
+    ("NDX", "NASDAQ 100", "US", "US"),
+    ("SPX", "S&P 500", "US", "US"),
+    ("DJI", "DOW JONES", "US", "US"),
 ]
 
 
 def group_symbols(group: str, watchlist: list) -> list:
     if group == "nifty50":
         return [s for s, _ in NIFTY50]
+    if group == "nasdaq100":
+        return [s for s, _ in NASDAQ100]
     return list(watchlist)

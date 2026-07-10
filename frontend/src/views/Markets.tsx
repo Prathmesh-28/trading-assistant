@@ -4,9 +4,10 @@ import { api } from "../api";
 import { toast } from "../toast";
 import { ChartPanel } from "../components/ChartPanel";
 import { IndexStrip } from "../components/IndexStrip";
-import type { MarketData, Snapshot } from "../types";
+import { QuantCard } from "../components/QuantCard";
+import type { MarketData, Snapshot, Suggestion } from "../types";
 
-type Group = "watchlist" | "nifty50";
+type Group = "watchlist" | "nifty50" | "nasdaq100";
 
 /** Groww-style market browser: indices on top, then a searchable stock list
  * (My stocks / NIFTY 50), tap any row to open its chart. */
@@ -16,6 +17,7 @@ export function Markets({ snapshot, prices }: { snapshot: Snapshot; prices: Reco
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [picks, setPicks] = useState<Suggestion[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,6 +33,7 @@ export function Markets({ snapshot, prices }: { snapshot: Snapshot; prices: Reco
         })
         .catch(() => !cancelled && setLoading(false));
     load();
+    api.suggestions(group).then((r) => !cancelled && setPicks(r.picks)).catch(() => {});
     const t = setInterval(load, 30000);
     return () => {
       cancelled = true;
@@ -61,6 +64,7 @@ export function Markets({ snapshot, prices }: { snapshot: Snapshot; prices: Reco
           ‹ All stocks
         </button>
         <ChartPanel symbol={selected} snapshot={snapshot} prices={prices} />
+        <QuantCard symbol={selected} />
         <OrderTicket
           symbol={selected}
           ltp={prices[selected] ?? q?.ltp ?? 0}
@@ -98,6 +102,24 @@ export function Markets({ snapshot, prices }: { snapshot: Snapshot; prices: Reco
         </div>
       )}
 
+      {picks.length > 0 && (
+        <div className="picks-card">
+          <div className="picks-head">
+            <span>🤖 Bot's top picks</span>
+            <em>rule-based score, not advice</em>
+          </div>
+          {picks.slice(0, 3).map((p) => (
+            <button key={p.symbol} className="pick-row" onClick={() => setSelected(p.symbol)}>
+              <div className="pick-id">
+                <strong>{p.symbol}</strong>
+                <span>{p.reason}</span>
+              </div>
+              <span className="pick-score">{p.score}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="market-controls">
         <div className="group-toggle">
           <button className={group === "watchlist" ? "active" : ""} onClick={() => setGroup("watchlist")}>
@@ -105,6 +127,9 @@ export function Markets({ snapshot, prices }: { snapshot: Snapshot; prices: Reco
           </button>
           <button className={group === "nifty50" ? "active" : ""} onClick={() => setGroup("nifty50")}>
             NIFTY 50
+          </button>
+          <button className={group === "nasdaq100" ? "active" : ""} onClick={() => setGroup("nasdaq100")}>
+            US 🇺🇸
           </button>
         </div>
         <input
@@ -116,6 +141,12 @@ export function Markets({ snapshot, prices }: { snapshot: Snapshot; prices: Reco
         />
       </div>
 
+      {group === "nasdaq100" && (
+        <p className="thin-banner thin-warn" style={{ borderRadius: 8 }}>
+          US stocks are demo-priced for now — live US data & orders need a US broker
+          connection (e.g. Alpaca). Indian trading is unaffected.
+        </p>
+      )}
       {loading && !rows.length ? (
         <p className="text-muted empty-note">Loading prices…</p>
       ) : (
@@ -130,7 +161,7 @@ export function Markets({ snapshot, prices }: { snapshot: Snapshot; prices: Reco
                   {v.name && <span>{v.name}</span>}
                 </div>
                 <div className="stock-quote">
-                  <strong>₹{live.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</strong>
+                  <strong>{group === "nasdaq100" ? "$" : "₹"}{live.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</strong>
                   {v.change_pct !== null && (
                     <span className={up ? "good" : "critical"}>
                       {up ? "+" : ""}
