@@ -11,7 +11,7 @@ import { WalletCard } from "../components/WalletCard";
  * 2. Positions being watched, alarms first   (watch)
  * 3. How today went                          (review)
  * Market closed? Say when it opens and what will happen. */
-export function Today({ snapshot, market }: { snapshot: Snapshot; market: MarketStatus | null }) {
+export function Today({ snapshot, market, onBrowse }: { snapshot: Snapshot; market: MarketStatus | null; onBrowse?: () => void }) {
   const m = market ?? snapshot.market;
   const exec = snapshot.execute ?? { enabled: false, paper: snapshot.mode !== "LIVE" };
   const closed = m?.phase !== "open";
@@ -35,6 +35,11 @@ export function Today({ snapshot, market }: { snapshot: Snapshot; market: Market
             When it opens, the bot scans your {snapshot.watchlist.length} stocks and sends any
             trade idea here and to Telegram. You approve, it watches your exit for you.
           </p>
+          {onBrowse && (
+            <button className="btn-big btn-ignore hero-cta" onClick={onBrowse}>
+              Browse the markets meanwhile →
+            </button>
+          )}
         </div>
       )}
 
@@ -67,6 +72,11 @@ export function Today({ snapshot, market }: { snapshot: Snapshot; market: Market
             The bot is scanning. When a setup passes every check, the idea appears here — most
             show up between 9:20 and 14:30.
           </p>
+          {onBrowse && (
+            <button className="btn-big btn-ignore hero-cta" onClick={onBrowse}>
+              Browse the markets meanwhile →
+            </button>
+          )}
         </div>
       )}
 

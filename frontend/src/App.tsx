@@ -7,6 +7,7 @@ import { Landing } from "./Landing";
 import { marketLine } from "./lang";
 import { onToast } from "./toast";
 import { AlertBanner } from "./components/AlertBanner";
+import { Welcome } from "./components/Welcome";
 import { Markets } from "./views/Markets";
 import { Journal } from "./views/Journal";
 import { More } from "./views/More";
@@ -87,6 +88,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 
   return (
     <>
+      <Welcome />
       <AlertBanner
         alerts={[...alerts, ...clientAlerts]}
         onDismiss={(id) => {
@@ -116,7 +118,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       )}
 
       <main className="app-main">
-        {tab === "today" && <Today snapshot={snapshot} market={market} />}
+        {tab === "today" && <Today snapshot={snapshot} market={market} onBrowse={() => setTab("chart")} />}
         {tab === "chart" && <Markets snapshot={snapshot} prices={prices} />}
         {tab === "journal" && <Journal rows={history} />}
         {tab === "more" && (

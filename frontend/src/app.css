@@ -1857,3 +1857,78 @@
   accent-color: var(--series-blue);
   flex-shrink: 0;
 }
+
+/* ---------- welcome tour + wayfinding ---------- */
+
+.tour-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  backdrop-filter: blur(2px);
+}
+.tour-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 28px 24px;
+  max-width: 360px;
+  width: 100%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tour-icon { font-size: 40px; }
+.tour-card h2 { margin: 0; font-size: 18px; }
+.tour-card p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.tour-dots {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin: 6px 0;
+}
+.tour-dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.tour-dots span.on { background: var(--series-blue); border-color: var(--series-blue); }
+.tour-skip {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 4px;
+}
+.hero-cta {
+  margin-top: 14px;
+  max-width: 300px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.howit { display: flex; flex-direction: column; gap: 12px; }
+.howit-step {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.howit-step strong { font-size: 14px; }
+.howit-step p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
