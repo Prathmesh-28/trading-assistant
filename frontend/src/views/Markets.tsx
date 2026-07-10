@@ -4,6 +4,7 @@ import { api } from "../api";
 import { toast } from "../toast";
 import { ChartPanel } from "../components/ChartPanel";
 import { IndexStrip } from "../components/IndexStrip";
+import { FundamentalsCard } from "../components/FundamentalsCard";
 import { QuantCard } from "../components/QuantCard";
 import type { MarketData, Snapshot, Suggestion } from "../types";
 
@@ -11,13 +12,20 @@ type Group = "watchlist" | "nifty50" | "nasdaq100";
 
 /** Groww-style market browser: indices on top, then a searchable stock list
  * (My stocks / NIFTY 50), tap any row to open its chart. */
-export function Markets({ snapshot, prices }: { snapshot: Snapshot; prices: Record<string, number> }) {
+export function Markets({ snapshot, prices, jumpSymbol, onConsumeJump }: { snapshot: Snapshot; prices: Record<string, number>; jumpSymbol?: string; onConsumeJump?: () => void }) {
   const [group, setGroup] = useState<Group>("watchlist");
   const [data, setData] = useState<MarketData | null>(null);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [picks, setPicks] = useState<Suggestion[]>([]);
+
+  useEffect(() => {
+    if (jumpSymbol) {
+      setSelected(jumpSymbol);
+      onConsumeJump?.();
+    }
+  }, [jumpSymbol]);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +73,7 @@ export function Markets({ snapshot, prices }: { snapshot: Snapshot; prices: Reco
         </button>
         <ChartPanel symbol={selected} snapshot={snapshot} prices={prices} />
         <QuantCard symbol={selected} />
+        <FundamentalsCard symbol={selected} />
         <OrderTicket
           symbol={selected}
           ltp={prices[selected] ?? q?.ltp ?? 0}

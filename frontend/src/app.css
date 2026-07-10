@@ -2010,3 +2010,37 @@
   color: var(--series-blue);
   flex-shrink: 0;
 }
+
+/* ---------- screener + fundamentals ---------- */
+
+.screener { display: flex; flex-direction: column; gap: 14px; }
+.screen-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.screen-chip {
+  display: flex; flex-direction: column; gap: 2px; text-align: left;
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 12px; color: var(--text-primary);
+}
+.screen-chip.active { border-color: var(--series-blue); background: color-mix(in srgb, var(--series-blue) 10%, var(--surface-1)); }
+.screen-chip strong { font-size: 13px; }
+.screen-chip span { font-size: 11px; color: var(--text-muted); line-height: 1.35; }
+.screen-expr { font-size: 11px; color: var(--text-muted); margin: 0; }
+.screen-expr code { background: var(--surface-2); padding: 2px 6px; border-radius: 4px; word-break: break-word; }
+
+.fund-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
+.fund-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.fund-head strong { font-size: 15px; display: block; }
+.fund-sector { font-size: 11px; color: var(--text-muted); }
+.fund-score { font-size: 22px; font-weight: 800; color: var(--series-blue); white-space: nowrap; }
+.fund-score em { font-size: 11px; font-style: normal; color: var(--text-muted); }
+.fund-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; }
+.fund-row { display: flex; justify-content: space-between; font-size: 13px; }
+.fund-row span { color: var(--text-muted); }
+.fund-proscons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.fund-proscons span { font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.fund-proscons ul { margin: 4px 0 0; padding-left: 16px; }
+.fund-proscons li { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+.fund-years { margin-top: 12px; border-top: 1px solid var(--gridline); padding-top: 8px; }
+.fund-years-head, .fund-years-row { display: grid; grid-template-columns: 1fr 1fr 1fr; font-size: 12px; padding: 3px 0; }
+.fund-years-head { color: var(--text-muted); font-weight: 600; }
+.fund-years-row span:not(:first-child), .fund-years-head span:not(:first-child) { text-align: right; }
+.fund-foot { font-size: 11px; margin: 10px 0 0; }

@@ -515,6 +515,73 @@ async def fundamentals_ep(symbol: str):
     return payload
 
 
+# ------------------------------------------------------------------ screener
+
+from screener import PREBUILT, ScreenError, run_screen  # noqa: E402
+from quant import quant_stats  # noqa: E402 (already imported above; harmless)
+
+_SCREEN_TTL = 1800.0   # fundamentals move slowly; 30-min cache
+
+
+def _merged_metrics(group: str) -> dict:
+    """Per-symbol quant + fundamentals merged, for the screen engine. Heavy
+    (yfinance per symbol) — cached; the watchlist stays small so this is fine."""
+    from universe import group_symbols, NASDAQ100
+    from fundamentals import fetch_fundamentals
+    us = {sym for sym, _ in NASDAQ100}
+    idx = engine.feed.get_chart_candles(engine.s.index_symbol, 1440, 400)
+    out = {}
+    for sym in group_symbols(group, engine.s.watchlist):
+        m = {}
+        try:
+            candles = engine.feed.get_chart_candles(sym, 1440, 400)
+            if len(candles) >= 60:
+                q = quant_stats(candles, idx)
+                if "error" not in q:
+                    m.update(q)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            f = fetch_fundamentals(sym, "US" if sym in us else "IN")
+            if f:
+                m.update({k: v for k, v in f.items() if v is not None})
+        except Exception:  # noqa: BLE001
+            pass
+        if m:
+            m.setdefault("name", sym)
+            out[sym] = m
+    return out
+
+
+@app.get("/api/screens")
+async def list_screens():
+    return {"prebuilt": [{"key": k, **v} for k, v in PREBUILT.items()]}
+
+
+@app.post("/api/screen")
+async def run_screen_ep(body: dict):
+    group = body.get("group", "watchlist")
+    if group not in ("watchlist", "nifty50", "nasdaq100"):
+        raise HTTPException(400, "bad group")
+    key = body.get("key")
+    expr = PREBUILT[key]["expr"] if key in PREBUILT else body.get("expr", "")
+    if not expr:
+        raise HTTPException(400, "provide a prebuilt 'key' or a custom 'expr'")
+    ck = f"screenmetrics:{group}"
+    hit = _market_cache.get(ck)
+    if hit and time.time() - hit[0] < _SCREEN_TTL:
+        metrics = hit[1]
+    else:
+        metrics = await asyncio.to_thread(_merged_metrics, group)
+        _market_cache[ck] = (time.time(), metrics)
+    try:
+        matches = run_screen(expr, metrics)
+    except ScreenError as e:
+        raise HTTPException(400, f"screen error: {e}")
+    return {"expr": expr, "group": group, "scanned": len(metrics),
+            "matches": matches, "synthetic": bool(getattr(engine.feed, "synthetic", False))}
+
+
 # ------------------------------------------------------------------ chart data
 
 _chart_cache: dict = {}  # (symbol, interval, days) -> (fetched_at, payload)

@@ -103,7 +103,13 @@ export const api = {
       body: JSON.stringify({ amount }),
     }),
   quant: (symbol: string) => req<QuantStats>(`/api/quant/${symbol}`),
-  fundamentals: (symbol: string) => req<Record<string, unknown>>(`/api/fundamentals/${symbol}`),
+  fundamentals: (symbol: string) => req<Record<string, any>>(`/api/fundamentals/${symbol}`),
+  screens: () => req<{ prebuilt: { key: string; label: string; desc: string; expr: string }[] }>("/api/screens"),
+  runScreen: (body: { group?: string; key?: string; expr?: string }) =>
+    req<{ expr: string; scanned: number; matches: any[]; synthetic: boolean }>("/api/screen", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   armPosition: (symbol: string, on: boolean) =>
     req<{ reply: string; ok: boolean }>(`/api/positions/${symbol}/arm`, {
       method: "POST",

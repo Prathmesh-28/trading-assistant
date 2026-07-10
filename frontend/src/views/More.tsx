@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { api } from "../api";
 import { BacktestPanel } from "../components/BacktestPanel";
+import { ScreenerPanel } from "../components/ScreenerPanel";
 import { SettingsPanel } from "../components/SettingsPanel";
 import type { Snapshot } from "../types";
 
-type Section = "menu" | "settings" | "backtest" | "help";
+type Section = "menu" | "settings" | "backtest" | "help" | "screener";
 
 /** Everything that isn't daily trading lives here, one level deep. */
 export function More({
@@ -12,11 +13,13 @@ export function More({
   onLogout,
   paused,
   onTogglePause,
+  onOpenSymbol,
 }: {
   snapshot: Snapshot;
   onLogout: () => void;
   paused: boolean;
   onTogglePause: () => void;
+  onOpenSymbol?: (s: string) => void;
 }) {
   const [section, setSection] = useState<Section>("menu");
 
@@ -29,12 +32,17 @@ export function More({
         {section === "settings" && <SettingsPanel />}
         {section === "backtest" && <BacktestPanel snapshot={snapshot} />}
         {section === "help" && <HowItWorks />}
+        {section === "screener" && <ScreenerPanel onOpen={onOpenSymbol} />}
       </div>
     );
   }
 
   return (
     <div className="more">
+      <button className="more-item" onClick={() => setSection("screener")}>
+        <span>🔎 Stock screener</span>
+        <span className="more-hint">Find stocks by rules — quality, value, momentum</span>
+      </button>
       <button className="more-item" onClick={() => setSection("help")}>
         <span>❓ How this works</span>
         <span className="more-hint">The daily loop, in one minute</span>

@@ -44,6 +44,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   >([]);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [tab, setTab] = useState<Tab>("today");
+  const [jumpSymbol, setJumpSymbol] = useState<string>("");
   const [slowConnect, setSlowConnect] = useState(false);
 
   useEffect(() => {
@@ -119,7 +120,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 
       <main className="app-main">
         {tab === "today" && <Today snapshot={snapshot} market={market} onBrowse={() => setTab("chart")} />}
-        {tab === "chart" && <Markets snapshot={snapshot} prices={prices} />}
+        {tab === "chart" && <Markets snapshot={snapshot} prices={prices} jumpSymbol={jumpSymbol} onConsumeJump={() => setJumpSymbol("")} />}
         {tab === "journal" && <Journal rows={history} />}
         {tab === "more" && (
           <More
@@ -127,6 +128,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             onLogout={onLogout}
             paused={snapshot.paused}
             onTogglePause={() => (snapshot.paused ? api.resume() : api.pause())}
+            onOpenSymbol={(sym) => { setJumpSymbol(sym); setTab("chart"); }}
           />
         )}
       </main>

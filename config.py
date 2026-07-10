@@ -89,6 +89,10 @@ class Settings:
     # is the Nifty 50 ETF, so it flows through the normal equity data path.
     index_symbol: str = field(default_factory=lambda: _s("INDEX_SYMBOL", "NIFTYBEES"))
 
+    # screener.in scraping (operator-owned ToS decision; default OFF). When
+    # on, fundamentals prefer screener.in and fall back to yfinance.
+    screener_scrape_enabled: bool = field(default_factory=lambda: _b("SCREENER_SCRAPE_ENABLED", False))
+
     # Backtest slippage assumption, % of turnover per side
     slippage_pct: float = field(default_factory=lambda: _f("SLIPPAGE_PCT", 0.05))
 
