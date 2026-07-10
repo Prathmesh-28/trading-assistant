@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { health, login } from "./api";
 
-type EngineState = "checking" | "waking" | "demo" | "live" | "down";
+type EngineState = "checking" | "waking" | "demo" | "live" | "down" | "outdated";
 
 const ENGINE_LABEL: Record<EngineState, string> = {
   checking: "Checking engine…",
@@ -9,6 +9,7 @@ const ENGINE_LABEL: Record<EngineState, string> = {
   demo: "Engine online · demo data (safe to explore)",
   live: "Engine online · live NSE data",
   down: "Engine unreachable — try again in a minute",
+  outdated: "Server is running an old version — sign-in won't work until it's redeployed",
 };
 
 function LogoMark({ size = 56 }: { size?: number }) {
@@ -58,6 +59,12 @@ export function Landing({ onLogin }: { onLogin: () => void }) {
         try {
           const h = await health();
           if (cancelled) return;
+          // old backend builds answer /api/health but have no `mode` field —
+          // and no /api/login either, so say so instead of "online"
+          if (!h.mode) {
+            setEngine("outdated");
+            return;
+          }
           setEngine(h.mode === "LIVE" ? "live" : "demo");
           return;
         } catch {
@@ -88,7 +95,9 @@ export function Landing({ onLogin }: { onLogin: () => void }) {
           ? "Too many attempts — wait a few minutes."
           : msg.includes("401") || msg.includes("unauthorized")
             ? "Wrong username or password."
-            : "The engine isn't awake yet — give it a minute, then try again.",
+            : msg.includes("404") || msg.includes("405")
+              ? "The server is running an old version without sign-in. Redeploy the backend on Render (Manual Deploy → Deploy latest commit), wait ~3 min, then retry."
+              : "The engine isn't awake yet — give it a minute, then try again.",
       );
     } finally {
       setBusy(false);

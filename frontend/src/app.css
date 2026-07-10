@@ -1526,3 +1526,5 @@
   line-height: 1.6;
   margin: 16px 4px 0;
 }
+.ld-engine-outdated .ld-dot { background: var(--critical); }
+.ld-engine-outdated { color: var(--critical); font-weight: 600; }
