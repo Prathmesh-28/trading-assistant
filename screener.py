@@ -22,6 +22,8 @@ FIELDS = {
     "profit_margin_pct", "revenue_growth_pct", "revenue_cagr_pct", "pat_cagr_pct",
     "earnings_yield_pct", "peg", "graham_upside_pct", "fcf_yield_pct",
     "payout_ratio_pct", "current_ratio", "fundamental_score", "market_cap",
+    "roce_pct", "opm_pct", "npm_pct", "interest_coverage", "debtor_days",
+    "inventory_days", "sales_cagr_5y", "pat_cagr_5y", "piotroski_score", "altman_z",
 }
 
 _TOKEN = re.compile(r"\s*(>=|<=|==|!=|>|<|\(|\)|and|or|not|[A-Za-z_][A-Za-z0-9_]*|-?\d+\.?\d*)")
@@ -31,6 +33,21 @@ PREBUILT = {
         "label": "Quality",
         "desc": "High ROE, low debt, consistent growth",
         "expr": "roe_pct >= 15 and debt_to_equity < 60 and revenue_cagr_pct >= 8",
+    },
+    "coffee_can": {
+        "label": "Coffee Can",
+        "desc": "High ROCE + steady sales growth (Saurabh Mukherjea style)",
+        "expr": "roce_pct >= 15 and sales_cagr_5y >= 10",
+    },
+    "piotroski_strong": {
+        "label": "Piotroski 7+",
+        "desc": "Fundamentally improving (F-Score 7-9)",
+        "expr": "piotroski_score >= 7",
+    },
+    "safe_balance_sheet": {
+        "label": "Fortress balance sheet",
+        "desc": "Low debt, strong interest cover, Altman-safe",
+        "expr": "debt_to_equity < 40 and interest_coverage >= 5 and altman_z >= 3",
     },
     "value": {
         "label": "Value",

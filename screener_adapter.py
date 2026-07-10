@@ -87,23 +87,29 @@ def _f(v):
         return None
 
 
+def _cagr(first, last_, n):
+    if not (first and last_) or first <= 0 or last_ <= 0 or n <= 0:
+        return None
+    return round(((last_ / first) ** (1 / n) - 1) * 100, 1)
+
+
 def parse_datasheet(xlsx_bytes: bytes) -> dict | None:
-    """Parse the screener 'Data Sheet' tab (schema v2.x) into fundamentals.
-    Label-scan (not hardcoded rows) so minor layout shifts still resolve.
-    Returns None on drift so callers fall back to yfinance."""
+    """Parse the ENTIRE screener 'Data Sheet' tab (schema v2.x) — every P&L,
+    balance-sheet and cash-flow line across all years — then compute the full
+    screener-style ratio suite (ROCE, OPM/NPM, working-capital days, Piotroski
+    F-Score, Altman Z, CAGRs, FCF). Label-scan so layout shifts still resolve;
+    returns None on real drift so callers fall back to yfinance."""
     import openpyxl
 
     try:
         wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes), data_only=True, read_only=True)
-    except Exception as e:  # noqa: BLE001 — corrupt/HTML-error body
+    except Exception as e:  # noqa: BLE001
         log.warning("screener export not a valid xlsx: %s", e)
         return None
     if "Data Sheet" not in wb.sheetnames:
         log.warning("screener drift: no 'Data Sheet' tab — failing soft")
         return None
-    ds = wb["Data Sheet"]
-
-    rows = [[c.value for c in row] for row in ds.iter_rows()]
+    rows = [[c.value for c in row] for row in wb["Data Sheet"].iter_rows()]
 
     def label_row(label, start=0, end=None):
         end = end if end is not None else len(rows)
@@ -114,71 +120,161 @@ def parse_datasheet(xlsx_bytes: bytes) -> dict | None:
                 return i
         return None
 
-    def cell(label, col=1, start=0, end=None):
+    def cell(label, start=0, end=None):
         i = label_row(label, start, end)
-        return _f(rows[i][col]) if i is not None and col < len(rows[i]) else None
+        return _f(rows[i][1]) if i is not None and len(rows[i]) > 1 else None
 
-    def series(label, start, end):
+    def series(label, start, end=None):
         i = label_row(label, start, end)
-        if i is None:
-            return []
-        return [_f(v) for v in rows[i][1:] if _f(v) is not None]
-
-    # section anchors
-    pl = label_row("PROFIT & LOSS") or 0
-    bs = label_row("BALANCE SHEET") or (pl + 40)
-    cf = label_row("CASH FLOW:") or (bs + 25)
-
-    name = rows[0][1] if rows and len(rows[0]) > 1 and isinstance(rows[0][1], str) else None
-    face_value = cell("Face Value", 1, 0, pl)
-    price = cell("Current Price", 1, 0, pl)
-    mcap = cell("Market Capitalization", 1, 0, pl)
-
-    sales = series("Sales", pl, bs)
-    net_profit = series("Net profit", pl, bs)
-    dividend = series("Dividend Amount", pl, bs)
-
-    equity = series("Equity Share Capital", bs, cf)
-    reserves = series("Reserves", bs, cf)
-    borrowings = series("Borrowings", bs, cf)
-    shares = series("No. of Equity Shares", bs, cf)
-
-    if not sales or not net_profit:
-        log.warning("screener drift: Sales/Net-profit rows empty — failing soft")
-        return None
+        return [_f(v) for v in rows[i][1:] if _f(v) is not None] if i is not None else []
 
     def last(xs):
         return xs[-1] if xs else None
 
-    latest_np = last(net_profit)
-    latest_equity = (last(equity) or 0) + (last(reserves) or 0)
-    latest_borrow = last(borrowings)
-
     def pct(n, d):
         return round(n / d * 100, 1) if n is not None and d else None
+
+    pl = label_row("PROFIT & LOSS") or 0
+    qs = label_row("Quarters") or (pl + 25)
+    bs = label_row("BALANCE SHEET") or (qs + 15)
+    cf = label_row("CASH FLOW:") or (bs + 25)
+
+    # --- full annual P&L ---
+    sales = series("Sales", pl, qs)
+    net_profit = series("Net profit", pl, qs)
+    op_profit = series("Operating Profit", pl, qs)
+    other_income = series("Other Income", pl, qs)
+    depreciation = series("Depreciation", pl, qs)
+    interest = series("Interest", pl, qs)
+    pbt = series("Profit before tax", pl, qs)
+    tax = series("Tax", pl, qs)
+    dividend = series("Dividend Amount", pl, qs)
+    eps_row = series("EPS", pl, qs)
+    if not sales or not net_profit:
+        log.warning("screener drift: Sales/Net-profit empty — failing soft")
+        return None
+
+    # --- full balance sheet ---
+    equity = series("Equity Share Capital", bs, cf)
+    reserves = series("Reserves", bs, cf)
+    borrowings = series("Borrowings", bs, cf)
+    other_liab = series("Other Liabilities", bs, cf)
+    net_block = series("Net Block", bs, cf)
+    investments = series("Investments", bs, cf)
+    other_assets = series("Other Assets", bs, cf)
+    receivables = series("Receivables", bs, cf) or series("Debtors", bs, cf)
+    inventory = series("Inventory", bs, cf)
+    cash_bank = series("Cash & Bank", bs, cf)
+    shares = series("No. of Equity Shares", bs, cf)
+
+    # --- cash flow ---
+    cfo = series("Cash from Operating Activity", cf)
+    cfi = series("Cash from Investing Activity", cf)
+    cff = series("Cash from Financing Activity", cf)
+
+    name = rows[0][1] if rows and len(rows[0]) > 1 and isinstance(rows[0][1], str) else None
+    price = cell("Current Price", 0, pl)
+    mcap = cell("Market Capitalization", 0, pl)
+    face_value = cell("Face Value", 0, pl)
+
+    latest_np = last(net_profit)
+    eq_total = [(equity[i] if i < len(equity) else 0) + (reserves[i] if i < len(reserves) else 0)
+                for i in range(max(len(equity), len(reserves)))]
+    latest_eq = last(eq_total)
+    latest_borrow = last(borrowings)
+
+    # annual Operating Profit isn't a direct row — reconstruct it:
+    # OP = PBT + Interest + Depreciation - Other Income
+    def _at(xs, i):
+        return xs[i] if i < len(xs) else 0
+    op_annual = [pbt[i] + _at(interest, i) + _at(depreciation, i) - _at(other_income, i)
+                 for i in range(len(pbt))] if pbt else []
+    op_profit = op_profit or op_annual
+
+    # ROCE = EBIT / (equity + borrowings) ; EBIT ≈ PBT + interest
+    ebit = (last(pbt) or 0) + (last(interest) or 0) if pbt else None
+    capital_employed = (latest_eq or 0) + (latest_borrow or 0)
+    roce = pct(ebit, capital_employed) if ebit and capital_employed else None
+
+    # FCF ≈ CFO − capex(≈ change in net block, approx via investing) ; use CFO as proxy floor
+    fcf = last(cfo)
+
+    # working-capital days (latest)
+    debtor_days = (round(last(receivables) / last(sales) * 365, 0)
+                   if last(receivables) and last(sales) else None)
+    inventory_days = (round(last(inventory) / last(sales) * 365, 0)
+                      if last(inventory) and last(sales) else None)
+
+    # Piotroski F-Score (9 pts) — needs 2 consecutive years
+    piotroski = None
+    if len(net_profit) >= 2 and len(eq_total) >= 2:
+        f = 0
+        f += 1 if latest_np > 0 else 0                                    # 1 positive NI
+        f += 1 if fcf and fcf > 0 else 0                                  # 2 positive CFO
+        f += 1 if len(net_profit) >= 2 and pct(latest_np, latest_eq) and \
+            pct(net_profit[-2], eq_total[-2] or 1) and \
+            pct(latest_np, latest_eq) > pct(net_profit[-2], eq_total[-2] or 1) else 0  # 3 rising ROA
+        f += 1 if fcf and fcf > latest_np else 0                          # 4 CFO > NI (accruals)
+        f += 1 if len(borrowings) >= 2 and (last(borrowings) or 0) <= (borrowings[-2] or 0) else 0  # 5 lower leverage
+        f += 1 if len(op_profit) >= 2 and len(sales) >= 2 and \
+            pct(last(op_profit), last(sales)) and pct(op_profit[-2], sales[-2] or 1) and \
+            pct(last(op_profit), last(sales)) > pct(op_profit[-2], sales[-2] or 1) else 0  # 6 rising margin
+        f += 1 if len(sales) >= 2 and last(sales) > (sales[-2] or 0) else 0  # 7 asset turnover proxy (sales growth)
+        f += 1 if len(shares) < 2 or (last(shares) or 0) <= (shares[-2] or 0) * 1.02 else 0  # 8 no big dilution
+        f += 1 if latest_np > (net_profit[-2] or 0) else 0                # 9 profit growth
+        piotroski = f
+
+    # Altman Z (approx, manufacturing form) — working capital, retained (reserves),
+    # EBIT, market cap, sales vs total assets
+    total_assets = last(other_assets) is not None and (
+        (last(net_block) or 0) + (last(investments) or 0) + (last(other_assets) or 0)) or None
+    altman_z = None
+    if total_assets and total_assets > 0:
+        wc = (last(cash_bank) or 0) + (last(receivables) or 0) + (last(inventory) or 0) - (last(other_liab) or 0)
+        z = (1.2 * wc / total_assets
+             + 1.4 * (last(reserves) or 0) / total_assets
+             + 3.3 * (ebit or 0) / total_assets
+             + 0.6 * (mcap or 0) / ((last(borrowings) or 0) + (last(other_liab) or 1))
+             + 1.0 * (last(sales) or 0) / total_assets)
+        altman_z = round(z, 2)
 
     out = {
         "source": "screener.in",
         "name": name,
         "face_value": face_value,
         "market_cap": mcap,
-        "pe": (round(mcap / latest_np, 2) if mcap and latest_np else None),
-        "roe_pct": pct(latest_np, latest_equity),
-        "debt_to_equity": (round(latest_borrow / latest_equity, 2)
-                           if latest_borrow is not None and latest_equity else None),
-        "roce_pct": None,
-        "dividend_yield_pct": None,
+        "pe": round(mcap / latest_np, 2) if mcap and latest_np else None,
+        "roe_pct": pct(latest_np, latest_eq),
+        "roce_pct": roce,
+        "debt_to_equity": round(latest_borrow / latest_eq, 2) if latest_borrow is not None and latest_eq else None,
+        "opm_pct": pct(last(op_profit), last(sales)),
+        "npm_pct": pct(latest_np, last(sales)),
+        "interest_coverage": round(ebit / last(interest), 1) if ebit and last(interest) else None,
         "payout_ratio_pct": pct(last(dividend), latest_np),
+        "dividend_yield_pct": None,
+        "fcf": fcf,
+        "fcf_yield_pct": pct(fcf, mcap),
+        "debtor_days": debtor_days,
+        "inventory_days": inventory_days,
+        "revenue_cagr_pct": _cagr(sales[0], sales[-1], len(sales) - 1),
+        "pat_cagr_pct": _cagr(net_profit[0], net_profit[-1], len(net_profit) - 1),
+        "sales_cagr_5y": _cagr(sales[-6], sales[-1], 5) if len(sales) >= 6 else None,
+        "pat_cagr_5y": _cagr(net_profit[-6], net_profit[-1], 5) if len(net_profit) >= 6 else None,
+        "piotroski_score": piotroski,
+        "altman_z": altman_z,
+        "eps": round(eps_row[-1], 2) if eps_row else None,
+        "cfo_latest": last(cfo),
         "years": [],
+        "cashflow": {"operating": cfo[-5:], "investing": cfi[-5:], "financing": cff[-5:]},
     }
-    # revenue/profit history (align by shared length, newest last)
     n = min(len(sales), len(net_profit))
+    prev = None
     for i in range(n):
-        out["years"].append({"year": None, "revenue": sales[i],
-                             "net_income": net_profit[i], "revenue_growth_pct": None})
-    if price and last(shares):
-        eps = latest_np * 1e7 / last(shares) if latest_np else None  # Cr->abs
-        out["eps"] = round(eps, 2) if eps else None
+        g = round((sales[i] / prev - 1) * 100, 1) if prev else None
+        opm = pct(op_profit[i], sales[i]) if i < len(op_profit) else None
+        out["years"].append({"year": None, "revenue": sales[i], "net_income": net_profit[i],
+                             "revenue_growth_pct": g, "opm_pct": opm})
+        prev = sales[i]
     return out
 
 

@@ -98,11 +98,14 @@ def fetch_fundamentals(symbol: str, market: str = "IN") -> dict | None:
                 import screener_adapter
                 sc = screener_adapter.fetch(symbol)
                 if sc:
-                    for k in ("pe", "roe_pct", "debt_to_equity", "dividend_yield_pct"):
+                    for k in ("pe", "roe_pct", "debt_to_equity", "dividend_yield_pct",
+                              "roce_pct", "opm_pct", "npm_pct", "interest_coverage",
+                              "payout_ratio_pct", "fcf", "fcf_yield_pct", "debtor_days",
+                              "inventory_days", "revenue_cagr_pct", "pat_cagr_pct",
+                              "sales_cagr_5y", "pat_cagr_5y", "piotroski_score",
+                              "altman_z", "eps", "market_cap"):
                         if sc.get(k) is not None:
                             base[k] = sc[k]
-                    if sc.get("roce_pct") is not None:
-                        base["roce_pct"] = sc["roce_pct"]
                     if sc.get("pros"):
                         base["pros"] = sc["pros"]
                     if sc.get("cons"):

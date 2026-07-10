@@ -20,7 +20,12 @@ export function FundamentalsCard({ symbol }: { symbol: string }) {
   const rows: [string, any][] = [
     ["P/E", f.pe], ["P/B", f.pb], ["ROE", f.roe_pct != null ? `${f.roe_pct}%` : null],
     ["Debt/Equity", f.debt_to_equity], ["Net margin", f.profit_margin_pct != null ? `${f.profit_margin_pct}%` : null],
-    ["Rev CAGR", f.revenue_cagr_pct != null ? `${f.revenue_cagr_pct}%` : null],
+    ["ROCE", f.roce_pct != null ? `${f.roce_pct}%` : null],
+    ["OPM", f.opm_pct != null ? `${f.opm_pct}%` : null],
+    ["Rev CAGR (5y)", f.sales_cagr_5y != null ? `${f.sales_cagr_5y}%` : (f.revenue_cagr_pct != null ? `${f.revenue_cagr_pct}%` : null)],
+    ["Interest cover", f.interest_coverage],
+    ["Piotroski", f.piotroski_score != null ? `${f.piotroski_score}/9` : null],
+    ["Altman Z", f.altman_z],
     ["Div yield", f.dividend_yield_pct != null ? `${f.dividend_yield_pct}%` : null],
     ["Earnings yield", f.earnings_yield_pct != null ? `${f.earnings_yield_pct}%` : null],
   ];
@@ -68,7 +73,7 @@ export function FundamentalsCard({ symbol }: { symbol: string }) {
           ))}
         </div>
       )}
-      <p className="fund-foot text-muted">Fundamentals via Yahoo Finance{f.market === "US" ? "" : " (NSE)"} — quarterly facts, not live.</p>
+      <p className="fund-foot text-muted">{f.source === "screener.in + yfinance" ? "Fundamentals via screener.in + Yahoo" : `Fundamentals via Yahoo Finance${f.market === "US" ? "" : " (NSE)"}`} — quarterly facts, not live.</p>
     </div>
   );
 }
