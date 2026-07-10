@@ -60,8 +60,8 @@ export interface Wallet {
 
 export interface Snapshot {
   mode: "LIVE" | "SYNTHETIC";
-  wallet: Wallet;
-  execute: { enabled: boolean; paper: boolean };
+  wallet?: Wallet;
+  execute?: { enabled: boolean; paper: boolean };
   paused: boolean;
   watchlist: string[];
   context: MarketContext;

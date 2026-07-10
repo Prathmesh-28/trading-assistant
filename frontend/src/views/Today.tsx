@@ -13,6 +13,7 @@ import { WalletCard } from "../components/WalletCard";
  * Market closed? Say when it opens and what will happen. */
 export function Today({ snapshot, market }: { snapshot: Snapshot; market: MarketStatus | null }) {
   const m = market ?? snapshot.market;
+  const exec = snapshot.execute ?? { enabled: false, paper: snapshot.mode !== "LIVE" };
   const closed = m?.phase !== "open";
   const pnl = snapshot.day_stats.realised_pnl;
   const nothingOn = snapshot.pending.length === 0 && snapshot.positions.length === 0;
@@ -25,7 +26,7 @@ export function Today({ snapshot, market }: { snapshot: Snapshot; market: Market
 
   return (
     <div className="today">
-      <WalletCard wallet={snapshot.wallet} paper={snapshot.execute.paper} />
+      {snapshot.wallet && <WalletCard wallet={snapshot.wallet} paper={exec.paper} />}
       <IndexStrip />
       {closed && nothingOn && (
         <div className="closed-hero">
@@ -43,7 +44,7 @@ export function Today({ snapshot, market }: { snapshot: Snapshot; market: Market
             👋 Needs your decision <span className="count-pill">{snapshot.pending.length}</span>
           </h2>
           {snapshot.pending.map((idea) => (
-            <IdeaCard key={idea.idea_id} idea={idea} execute={snapshot.execute} />
+            <IdeaCard key={idea.idea_id} idea={idea} execute={exec} />
           ))}
         </section>
       )}
@@ -54,7 +55,7 @@ export function Today({ snapshot, market }: { snapshot: Snapshot; market: Market
             👁 Being watched for you <span className="count-pill">{positions.length}</span>
           </h2>
           {positions.map((idea) => (
-            <PositionRow key={idea.idea_id} idea={idea} execute={snapshot.execute} />
+            <PositionRow key={idea.idea_id} idea={idea} execute={exec} />
           ))}
         </section>
       )}

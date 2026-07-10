@@ -64,8 +64,8 @@ export function Markets({ snapshot, prices }: { snapshot: Snapshot; prices: Reco
         <OrderTicket
           symbol={selected}
           ltp={prices[selected] ?? q?.ltp ?? 0}
-          execute={snapshot.execute}
-          cash={snapshot.wallet.cash}
+          execute={snapshot.execute ?? { enabled: false, paper: snapshot.mode !== "LIVE" }}
+          cash={snapshot.wallet?.cash ?? 0}
         />
       </div>
     );

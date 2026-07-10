@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import "./index.css";
 import "./app.css";
 import { API_BASE, api, clearToken, getToken } from "./api";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { Landing } from "./Landing";
 import { marketLine } from "./lang";
 import { onToast } from "./toast";
@@ -24,10 +25,15 @@ const TABS: { key: Tab; icon: string; label: string }[] = [
 
 function App() {
   const [authed, setAuthed] = useState(() => Boolean(getToken()));
-  if (!authed) {
-    return <Landing onLogin={() => setAuthed(true)} />;
-  }
-  return <Dashboard onLogout={() => { clearToken(); setAuthed(false); }} />;
+  return (
+    <ErrorBoundary>
+      {!authed ? (
+        <Landing onLogin={() => setAuthed(true)} />
+      ) : (
+        <Dashboard onLogout={() => { clearToken(); setAuthed(false); }} />
+      )}
+    </ErrorBoundary>
+  );
 }
 
 function Dashboard({ onLogout }: { onLogout: () => void }) {
