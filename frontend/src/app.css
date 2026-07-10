@@ -1314,3 +1314,215 @@
   padding: 0 0 4px;
   align-self: flex-start;
 }
+
+/* ================= landing v2 ================= */
+
+.ld {
+  position: relative;
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  overflow: hidden;
+  --logo-bg: #1a1a19;
+}
+.ld-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(600px 400px at 20% 10%, color-mix(in srgb, var(--series-blue) 14%, transparent), transparent 70%),
+    radial-gradient(500px 380px at 85% 85%, color-mix(in srgb, var(--good) 10%, transparent), transparent 70%);
+}
+.ld-shell {
+  position: relative;
+  width: 100%;
+  max-width: 1020px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 40px;
+}
+@media (min-width: 900px) {
+  .ld-shell {
+    grid-template-columns: 1.15fr 0.85fr;
+    align-items: center;
+    gap: 64px;
+  }
+}
+
+/* --- brand side --- */
+
+.ld-logo-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 28px;
+}
+.ld-wordmark {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.ld-headline {
+  font-size: clamp(30px, 4.5vw, 44px);
+  line-height: 1.12;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 14px;
+}
+.ld-accent {
+  background: linear-gradient(90deg, var(--series-blue), var(--good));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.ld-sub {
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0 0 32px;
+  max-width: 46ch;
+}
+.ld-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.ld-features li {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.ld-fi {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-size: 19px;
+  background: color-mix(in srgb, var(--series-blue) 12%, var(--surface-1));
+  border: 1px solid color-mix(in srgb, var(--series-blue) 25%, var(--border));
+}
+.ld-features li:nth-child(2) .ld-fi {
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--warning) 25%, var(--border));
+}
+.ld-features li:nth-child(3) .ld-fi {
+  background: color-mix(in srgb, var(--good) 12%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--good) 25%, var(--border));
+}
+.ld-features strong {
+  font-size: 15px;
+  display: block;
+  margin-bottom: 2px;
+}
+.ld-features p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  max-width: 44ch;
+}
+
+/* --- sign-in side --- */
+
+.ld-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.06),
+    0 12px 40px -12px rgba(0, 0, 0, 0.25);
+}
+.ld-card h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
+}
+.ld-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.ld-card input {
+  padding: 13px 14px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font-size: 16px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.ld-card input:focus {
+  outline: none;
+  border-color: var(--series-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--series-blue) 20%, transparent);
+}
+.ld-error {
+  color: var(--critical);
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+}
+.ld-btn {
+  border: none;
+  border-radius: 12px;
+  padding: 15px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, var(--series-blue), color-mix(in srgb, var(--series-blue) 70%, var(--good)));
+  box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--series-blue) 60%, transparent);
+  transition: transform 0.1s ease, filter 0.15s ease;
+}
+.ld-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.ld-btn:active:not(:disabled) {
+  transform: scale(0.985);
+}
+.ld-btn:disabled {
+  opacity: 0.6;
+}
+.ld-engine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin: 0;
+}
+.ld-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.ld-engine-live .ld-dot { background: var(--good); }
+.ld-engine-demo .ld-dot { background: var(--warning); }
+.ld-engine-checking .ld-dot,
+.ld-engine-waking .ld-dot {
+  background: var(--warning);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.ld-engine-down .ld-dot { background: var(--critical); }
+.ld-foot {
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 16px 4px 0;
+}
