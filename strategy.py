@@ -37,6 +37,14 @@ from recommendation import Horizon, Side
 
 log = logging.getLogger("strategy")
 
+# NSE trading holidays 2026 (edit yearly; weekends handled separately)
+NSE_HOLIDAYS_2026 = {
+    "2026-01-26", "2026-02-17", "2026-03-04", "2026-03-26", "2026-04-01",
+    "2026-04-03", "2026-04-14", "2026-05-01", "2026-05-28", "2026-06-26",
+    "2026-08-15", "2026-09-14", "2026-10-02", "2026-10-20", "2026-11-10",
+    "2026-11-11", "2026-12-25",
+}
+
 MARKET_OPEN = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
 SQUARE_OFF_WARN = dtime(15, 10)
@@ -53,15 +61,19 @@ GAP_GO_MIN_PCT = 2.0       # open gap vs prev close for the Gap-and-Go variant
 GAP_GO_RVOL_MIN = 2.0      # gap days need real participation, not just a mark-up open
 
 
+def is_trading_day(now: datetime) -> bool:
+    return now.weekday() < 5 and now.date().isoformat() not in NSE_HOLIDAYS_2026
+
+
 def market_is_open(now: datetime) -> bool:
-    if now.weekday() >= 5:
+    if not is_trading_day(now):
         return False
     return MARKET_OPEN <= now.time() <= MARKET_CLOSE
 
 
 def _next_weekday(d: date) -> date:
     d += timedelta(days=1)
-    while d.weekday() >= 5:
+    while d.weekday() >= 5 or d.isoformat() in NSE_HOLIDAYS_2026:
         d += timedelta(days=1)
     return d
 

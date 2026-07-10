@@ -49,16 +49,20 @@ class Notifier:
         if not self._enabled:
             print(f"\n=== ALERT ===\n{text}\n=============")
             return
-        try:
-            resp = await self._client.post(
-                f"{self._base}/sendMessage",
-                json={"chat_id": self._chat_id, "text": text,
-                      "disable_web_page_preview": True},
-            )
-            if resp.status_code != 200:
-                log.warning("telegram send failed: %s %s", resp.status_code, resp.text[:200])
-        except httpx.HTTPError as e:
-            log.warning("telegram send error: %s", e)
+        for attempt in range(3):   # stop-hit alerts must not die on one blip
+            try:
+                resp = await self._client.post(
+                    f"{self._base}/sendMessage",
+                    json={"chat_id": self._chat_id, "text": text,
+                          "disable_web_page_preview": True},
+                )
+                if resp.status_code == 200:
+                    return
+                log.warning("telegram send failed (try %d): %s %s",
+                            attempt + 1, resp.status_code, resp.text[:200])
+            except httpx.HTTPError as e:
+                log.warning("telegram send error (try %d): %s", attempt + 1, e)
+            await asyncio.sleep(1.5 * (attempt + 1))
 
     async def command_loop(self) -> None:
         """Long-poll getUpdates and dispatch /commands to the engine."""
