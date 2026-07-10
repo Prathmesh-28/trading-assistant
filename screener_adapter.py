@@ -139,7 +139,15 @@ def parse_datasheet(xlsx_bytes: bytes) -> dict | None:
     bs = label_row("BALANCE SHEET") or (qs + 15)
     cf = label_row("CASH FLOW:") or (bs + 25)
 
+    def raw_series(label, start, end):
+        i = label_row(label, start, end)
+        return rows[i][1:] if i is not None else []
+
     # --- full annual P&L ---
+    report_years = []
+    for v in raw_series("Report Date", pl, qs):
+        m = re.match(r"(\d{4})", str(v)) if v is not None else None
+        report_years.append(m.group(1) if m else None)
     sales = series("Sales", pl, qs)
     net_profit = series("Net profit", pl, qs)
     op_profit = series("Operating Profit", pl, qs)
@@ -272,7 +280,8 @@ def parse_datasheet(xlsx_bytes: bytes) -> dict | None:
     for i in range(n):
         g = round((sales[i] / prev - 1) * 100, 1) if prev else None
         opm = pct(op_profit[i], sales[i]) if i < len(op_profit) else None
-        out["years"].append({"year": None, "revenue": sales[i], "net_income": net_profit[i],
+        yr = report_years[i] if i < len(report_years) else None
+        out["years"].append({"year": yr, "revenue": sales[i], "net_income": net_profit[i],
                              "revenue_growth_pct": g, "opm_pct": opm})
         prev = sales[i]
     return out
@@ -336,4 +345,254 @@ def fetch(symbol: str) -> dict | None:
             return data
     except Exception as e:  # noqa: BLE001 — never break the fundamentals card
         log.warning("screener fetch %s failed: %s", symbol, e)
+        return None
+
+
+# ---------------------------------------------------------------- page extras
+# The PUBLIC company page carries data the Excel export doesn't: shareholding
+# pattern, quarterly results grid, screener's official CAGR tables, machine-
+# generated pros/cons, working-capital days, peers, documents/concalls.
+# No login needed — this path works without SCREENER_COOKIE.
+
+def _table_rows(section) -> "tuple[dict, list]":
+    """{row-label-lower: [floats]} + column headers, from a section's
+    data table. Percent/comma noise stripped; blanks become None."""
+    tbl = section.select_one("table.data-table") or section.select_one("table")
+    if tbl is None:
+        return {}, []
+    headers = [th.get_text(strip=True) for th in tbl.select("thead th")][1:]
+    rows = {}
+    for tr in tbl.select("tbody tr") or tbl.select("tr"):
+        cells = tr.select("td")
+        if len(cells) < 2:
+            continue
+        label = cells[0].get_text(" ", strip=True)
+        label = re.sub(r"\s*\+\s*$", "", label).strip().lower()
+        vals = []
+        for c in cells[1:]:
+            t = c.get_text(strip=True).replace(",", "").replace("%", "")
+            vals.append(_f(t))
+        if label:
+            rows[label] = vals
+    return rows, headers
+
+
+def parse_page(html: str) -> dict | None:
+    """Everything screener.in shows on a company page, as one dict. Label-scan
+    everywhere; a missing section just yields Nones (fail-soft)."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    top = soup.select_one("#top-ratios")
+    if top is None:
+        log.warning("screener page drift: #top-ratios missing — failing soft")
+        return None
+
+    ratios = {}
+    for li in top.select("li"):
+        nm = li.select_one(".name")
+        if not nm:
+            continue
+        val = li.select_one(".nowrap.value") or li.select_one(".value") or li
+        txt = val.get_text(" ", strip=True)
+        ratios[nm.get_text(strip=True).lower()] = txt
+
+    def rnum(*keys, pick=0):
+        for k in keys:
+            for name, txt in ratios.items():
+                if k in name:
+                    nums = re.findall(r"-?[\d,]+\.?\d*", txt)
+                    if len(nums) > pick:
+                        return _f(nums[pick].replace(",", ""))
+        return None
+
+    def sect(sid):
+        return soup.select_one(f"section#{sid}") or soup.select_one(f"#{sid}")
+
+    out = {
+        "source": "screener.in",
+        "current_price": rnum("current price"),
+        "market_cap": rnum("market cap"),
+        "pe": rnum("stock p/e", "p/e"),
+        "book_value": rnum("book value"),
+        "dividend_yield_pct": rnum("dividend yield"),
+        "roce_pct": rnum("roce"),
+        "roe_pct": rnum("roe"),
+        "face_value": rnum("face value"),
+        "high_52w": rnum("high / low"),
+        "low_52w": rnum("high / low", pick=1),
+    }
+    out["pb"] = (round(out["current_price"] / out["book_value"], 2)
+                 if out["current_price"] and out["book_value"] else None)
+
+    out["pros"] = [li.get_text(" ", strip=True) for li in soup.select(".pros li")][:8]
+    out["cons"] = [li.get_text(" ", strip=True) for li in soup.select(".cons li")][:8]
+
+    # quarterly results grid (last 13 quarters)
+    q = sect("quarters")
+    if q:
+        rows, headers = _table_rows(q)
+        out["quarters"] = {
+            "headers": headers,
+            "sales": rows.get("sales", []),
+            "operating_profit": rows.get("operating profit", []),
+            "opm_pct": rows.get("opm %", []),
+            "net_profit": rows.get("net profit", []),
+            "eps": rows.get("eps in rs", []),
+        }
+
+    # official CAGR mini-tables (Compounded Sales/Profit Growth, Stock Price
+    # CAGR, Return on Equity) inside the P&L section
+    growth = {}
+    pl = sect("profit-loss")
+    if pl:
+        for t in pl.select("table.ranges-table"):
+            th = t.select_one("th")
+            title = th.get_text(" ", strip=True).rstrip(":").lower() if th else ""
+            entries = {}
+            for tr in t.select("tr"):
+                tds = tr.select("td")
+                if len(tds) == 2:
+                    k = tds[0].get_text(strip=True).rstrip(":").lower()
+                    entries[k] = _f(tds[1].get_text(strip=True).replace("%", ""))
+            if "sales" in title:
+                growth["sales_cagr"] = entries
+            elif "profit" in title:
+                growth["profit_cagr"] = entries
+            elif "price" in title:
+                growth["price_cagr"] = entries
+            elif "equity" in title:
+                growth["roe_trend"] = entries
+    out["growth"] = growth
+
+    # ratios trend (Debtor Days / Working Capital Days / ROCE %)
+    rt = sect("ratios")
+    if rt:
+        rows, headers = _table_rows(rt)
+        out["ratio_trends"] = {
+            "headers": headers,
+            "debtor_days": rows.get("debtor days", []),
+            "working_capital_days": rows.get("working capital days", []),
+            "roce_pct": rows.get("roce %", []),
+        }
+        wcd = rows.get("working capital days", [])
+        out["working_capital_days"] = wcd[-1] if wcd else None
+
+    # shareholding pattern (quarterly % + shareholder count)
+    sh = sect("shareholding")
+    if sh:
+        rows, headers = _table_rows(sh)
+        out["shareholding"] = {
+            "headers": headers,
+            "promoters": rows.get("promoters", []),
+            "fiis": rows.get("fiis", []),
+            "diis": rows.get("diis", []),
+            "public": rows.get("public", []),
+            "shareholders": rows.get("no. of shareholders", []),
+        }
+        for key, row in (("promoter_pct", "promoters"), ("fii_pct", "fiis"),
+                         ("dii_pct", "diis"), ("public_pct", "public")):
+            vals = rows.get(row, [])
+            out[key] = vals[-1] if vals else None
+        proms = rows.get("promoters", [])
+        out["promoter_change_pct"] = (round(proms[-1] - proms[0], 2)
+                                      if len(proms) >= 2 and proms[-1] is not None
+                                      and proms[0] is not None else None)
+
+    # documents: annual reports + concall links (URLs only, never re-hosted)
+    docs = {"annual_reports": [], "concalls": []}
+    dsec = sect("documents")
+    if dsec:
+        ar_box = dsec.select_one(".annual-reports")
+        for a in (ar_box.select("a") if ar_box else [])[:12]:
+            href = a.get("href", "")
+            label = " ".join(a.get_text(" ", strip=True).split())[:40]
+            if href.startswith("http"):
+                docs["annual_reports"].append({"label": label, "url": href})
+        for li in dsec.select(".concalls li, ul.show-more-box li")[:8]:
+            date = li.find(string=lambda t: t and t.strip())
+            links = {a.get_text(strip=True).lower(): a.get("href", "")
+                     for a in li.select("a") if a.get("href", "").startswith("http")}
+            if links:
+                docs["concalls"].append({"date": str(date).strip()[:12], **links})
+    out["documents"] = docs
+
+    # company id for the peers API
+    m = re.search(r'data-company-id="(\d+)"', html)
+    out["company_id"] = m.group(1) if m else None
+    return out
+
+
+def _parse_peers(html: str) -> list:
+    """Peer-comparison table parser — RESERVED, not called yet: screener's
+    peers API needs a logged-in session (public probe 404s). Wire it up when
+    a SCREENER_COOKIE flow lands, or build peers from our own universe."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    tbl = soup.select_one("table")
+    if tbl is None:
+        return []
+    headers = [th.get_text(" ", strip=True).lower() for th in tbl.select("thead th")]
+
+    def col(*keys):
+        for k in keys:
+            for i, h in enumerate(headers):
+                if k in h:
+                    return i
+        return None
+
+    ci = {"name": col("name"), "cmp": col("cmp"), "pe": col("p/e"),
+          "mcap": col("mar cap"), "roce": col("roce"), "np_qtr": col("np qtr"),
+          "sales_qtr": col("sales qtr")}
+    peers = []
+    for tr in tbl.select("tbody tr"):
+        tds = tr.select("td")
+        if len(tds) < 3 or "median" in tds[0].get_text(strip=True).lower():
+            continue
+        row = {}
+        for key, idx in ci.items():
+            if idx is None or idx >= len(tds):
+                continue
+            txt = tds[idx].get_text(" ", strip=True)
+            row[key] = txt if key == "name" else _f(txt.replace(",", ""))
+        if row.get("name"):
+            peers.append(row)
+    return peers[:10]
+
+
+def fetch_page(symbol: str) -> dict | None:
+    """Public company-page extras (shareholding, quarters, CAGRs,
+    pros/cons, documents). Cached like the export; no cookie required."""
+    if not enabled():
+        return None
+    cached = _read_cache(f"{symbol}_page")
+    if cached is not None:
+        return cached
+    if time.time() < _blocked_until[0]:
+        return None
+    try:
+        import httpx
+
+        headers = {"User-Agent": _UA}
+        cookie = os.getenv("SCREENER_COOKIE", "").strip()
+        if cookie:
+            headers["Cookie"] = cookie
+        with httpx.Client(timeout=20, follow_redirects=True, headers=headers) as client:
+            _throttle()
+            resp = client.get(f"{_BASE}/company/{symbol.upper()}/")
+            if resp.status_code in (403, 429):
+                _blocked_until[0] = time.time() + 1800
+                log.warning("screener page %s -> %s; 30min cooldown", symbol, resp.status_code)
+                return None
+            if resp.status_code != 200:
+                log.warning("screener page %s -> HTTP %s", symbol, resp.status_code)
+                return None
+            data = parse_page(resp.text)
+            if not data:
+                return None
+            _write_cache(f"{symbol}_page", data)
+            return data
+    except Exception as e:  # noqa: BLE001
+        log.warning("screener page fetch %s failed: %s", symbol, e)
         return None

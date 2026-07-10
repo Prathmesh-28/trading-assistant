@@ -24,6 +24,10 @@ FIELDS = {
     "payout_ratio_pct", "current_ratio", "fundamental_score", "market_cap",
     "roce_pct", "opm_pct", "npm_pct", "interest_coverage", "debtor_days",
     "inventory_days", "sales_cagr_5y", "pat_cagr_5y", "piotroski_score", "altman_z",
+    # screener.in page extras
+    "promoter_pct", "fii_pct", "dii_pct", "public_pct", "promoter_change_pct",
+    "working_capital_days", "book_value", "sales_cagr_3y", "sales_cagr_10y",
+    "profit_cagr_3y", "profit_cagr_5y", "profit_cagr_10y", "price_cagr_5y", "roe_3y_pct",
 }
 
 _TOKEN = re.compile(r"\s*(>=|<=|==|!=|>|<|\(|\)|and|or|not|[A-Za-z_][A-Za-z0-9_]*|-?\d+\.?\d*)")
@@ -68,6 +72,11 @@ PREBUILT = {
         "label": "Breakout + Strong books",
         "desc": "Near 52w high, fundamentally healthy",
         "expr": "from_52w_high_pct > -5 and fundamental_score >= 60",
+    },
+    "promoter_skin": {
+        "label": "Promoter skin-in-game",
+        "desc": "High promoter holding, quality business",
+        "expr": "promoter_pct >= 60 and roce_pct >= 15 and debt_to_equity < 60",
     },
     "graham_value": {
         "label": "Below Graham value",

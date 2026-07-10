@@ -28,7 +28,14 @@ export function FundamentalsCard({ symbol }: { symbol: string }) {
     ["Altman Z", f.altman_z],
     ["Div yield", f.dividend_yield_pct != null ? `${f.dividend_yield_pct}%` : null],
     ["Earnings yield", f.earnings_yield_pct != null ? `${f.earnings_yield_pct}%` : null],
+    ["Book value", f.book_value != null ? `${cur}${f.book_value}` : null],
+    ["Profit CAGR (5y)", f.profit_cagr_5y != null ? `${f.profit_cagr_5y}%` : null],
+    ["Working cap days", f.working_capital_days],
   ];
+
+  const qt = f.quarters;
+  const docs = f.documents;
+  const lastN = (a: any[] | undefined, n: number) => (a ?? []).slice(-n);
 
   return (
     <div className="fund-card">
@@ -50,7 +57,7 @@ export function FundamentalsCard({ symbol }: { symbol: string }) {
         ))}
       </div>
 
-      {(f.pros?.length || f.cons?.length) && (
+      {(f.pros?.length > 0 || f.cons?.length > 0) && (
         <div className="fund-proscons">
           {f.pros?.length > 0 && (
             <div><span className="good">Pros</span><ul>{f.pros.map((p: string) => <li key={p}>{p}</li>)}</ul></div>
@@ -73,6 +80,59 @@ export function FundamentalsCard({ symbol }: { symbol: string }) {
           ))}
         </div>
       )}
+      {f.promoter_pct != null && (
+        <div className="fund-shareholding">
+          <div className="fund-sec-title">Who owns it</div>
+          <div className="sh-chips">
+            <span>Promoters <strong>{f.promoter_pct}%</strong>{f.promoter_change_pct != null && f.promoter_change_pct !== 0 && (
+              <em className={f.promoter_change_pct > 0 ? "good" : "critical"}>
+                {" "}{f.promoter_change_pct > 0 ? "▲" : "▼"}{Math.abs(f.promoter_change_pct)}%
+              </em>
+            )}</span>
+            {f.fii_pct != null && <span>FIIs <strong>{f.fii_pct}%</strong></span>}
+            {f.dii_pct != null && <span>DIIs <strong>{f.dii_pct}%</strong></span>}
+            {f.public_pct != null && <span>Public <strong>{f.public_pct}%</strong></span>}
+          </div>
+        </div>
+      )}
+
+      {qt?.headers?.length > 0 && qt.sales?.length > 0 && (
+        <div className="fund-quarters">
+          <div className="fund-sec-title">Recent quarters</div>
+          <div className="fund-q-scroll">
+            <table>
+              <thead>
+                <tr><th></th>{lastN(qt.headers, 5).map((h: string) => <th key={h}>{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                <tr><td>Sales</td>{lastN(qt.sales, 5).map((v: number, i: number) => <td key={i}>{v ?? "—"}</td>)}</tr>
+                {qt.opm_pct?.length > 0 && (
+                  <tr><td>OPM</td>{lastN(qt.opm_pct, 5).map((v: number, i: number) => <td key={i}>{v != null ? `${v}%` : "—"}</td>)}</tr>
+                )}
+                <tr><td>Profit</td>{lastN(qt.net_profit, 5).map((v: number, i: number) => <td key={i}>{v ?? "—"}</td>)}</tr>
+                {qt.eps?.length > 0 && (
+                  <tr><td>EPS</td>{lastN(qt.eps, 5).map((v: number, i: number) => <td key={i}>{v ?? "—"}</td>)}</tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {(docs?.annual_reports?.length > 0 || docs?.concalls?.length > 0) && (
+        <div className="fund-docs">
+          <div className="fund-sec-title">Filings</div>
+          <div className="fund-doc-links">
+            {(docs.annual_reports ?? []).slice(0, 3).map((d: any) => (
+              <a key={d.url} href={d.url} target="_blank" rel="noreferrer">{d.label || "Annual report"}</a>
+            ))}
+            {(docs.concalls ?? []).slice(0, 2).map((c: any, i: number) => (
+              c.transcript && <a key={i} href={c.transcript} target="_blank" rel="noreferrer">Concall {c.date}</a>
+            ))}
+          </div>
+        </div>
+      )}
+
       <p className="fund-foot text-muted">{f.source === "screener.in + yfinance" ? "Fundamentals via screener.in + Yahoo" : `Fundamentals via Yahoo Finance${f.market === "US" ? "" : " (NSE)"}`} — quarterly facts, not live.</p>
     </div>
   );

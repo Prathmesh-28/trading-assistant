@@ -100,20 +100,27 @@ def fetch_fundamentals(symbol: str, market: str = "IN") -> dict | None:
                 if sc:
                     for k in ("pe", "roe_pct", "debt_to_equity", "dividend_yield_pct",
                               "roce_pct", "opm_pct", "npm_pct", "interest_coverage",
-                              "payout_ratio_pct", "fcf", "fcf_yield_pct", "debtor_days",
+                              "payout_ratio_pct", "fcf_yield_pct", "debtor_days",
                               "inventory_days", "revenue_cagr_pct", "pat_cagr_pct",
                               "sales_cagr_5y", "pat_cagr_5y", "piotroski_score",
-                              "altman_z", "eps", "market_cap"):
+                              "altman_z", "eps"):
                         if sc.get(k) is not None:
                             base[k] = sc[k]
+                    # screener statements are in Rs CRORES; the rest of the app
+                    # (card, DSL screens) uses raw INR — normalize at the boundary
+                    for k in ("market_cap", "fcf"):
+                        if sc.get(k) is not None:
+                            base[k] = sc[k] * 1e7
                     if sc.get("pros"):
                         base["pros"] = sc["pros"]
                     if sc.get("cons"):
                         base["cons"] = sc["cons"]
                     if sc.get("years"):
                         base["years"] = [
-                            {"year": y["year"], "revenue": y["revenue"],
-                             "net_income": y["net_income"], "revenue_growth_pct": None}
+                            {"year": y["year"],
+                             "revenue": y["revenue"] * 1e7 if y.get("revenue") else None,
+                             "net_income": y["net_income"] * 1e7 if y.get("net_income") else None,
+                             "revenue_growth_pct": y.get("revenue_growth_pct")}
                             for y in reversed(sc["years"])
                         ]
                     base["source"] = "screener.in + yfinance"
@@ -124,6 +131,42 @@ def fetch_fundamentals(symbol: str, market: str = "IN") -> dict | None:
                     }, base["years"]))
             except Exception as e:  # noqa: BLE001 — screener is best-effort
                 log.warning("screener overlay %s skipped: %s", symbol, e)
+            try:
+                import screener_adapter
+                pg = screener_adapter.fetch_page(symbol)
+                if pg:
+                    # official displayed numbers win over derived ones
+                    for k in ("pe", "roce_pct", "roe_pct", "book_value", "pb",
+                              "dividend_yield_pct", "face_value",
+                              "working_capital_days", "promoter_pct", "fii_pct",
+                              "dii_pct", "public_pct", "promoter_change_pct"):
+                        if pg.get(k) is not None:
+                            base[k] = pg[k]
+                    if pg.get("market_cap") is not None:
+                        base["market_cap"] = pg["market_cap"] * 1e7  # Cr -> raw INR
+                    if pg.get("pros"):
+                        base["pros"] = pg["pros"]
+                    if pg.get("cons"):
+                        base["cons"] = pg["cons"]
+                    g = pg.get("growth", {})
+                    for src, prefix in (("sales_cagr", "sales_cagr"),
+                                        ("profit_cagr", "profit_cagr"),
+                                        ("price_cagr", "price_cagr")):
+                        for span, key in (("3 years", "3y"), ("5 years", "5y"), ("10 years", "10y")):
+                            v = g.get(src, {}).get(span)
+                            if v is not None:
+                                base[f"{prefix}_{key}"] = v
+                    roe3 = g.get("roe_trend", {}).get("3 years")
+                    if roe3 is not None:
+                        base["roe_3y_pct"] = roe3
+                    for k in ("quarters", "shareholding", "documents"):
+                        if pg.get(k):
+                            base[k] = pg[k]
+                    base["source"] = ("screener.in + yfinance"
+                                      if base.get("source") != "screener.in + yfinance"
+                                      else base["source"])
+            except Exception as e:  # noqa: BLE001
+                log.warning("screener page overlay %s skipped: %s", symbol, e)
         base.setdefault("source", "yfinance")
         return base
     except Exception as e:  # noqa: BLE001 — never break the app for a card

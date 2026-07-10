@@ -2044,3 +2044,18 @@
 .fund-years-head { color: var(--text-muted); font-weight: 600; }
 .fund-years-row span:not(:first-child), .fund-years-head span:not(:first-child) { text-align: right; }
 .fund-foot { font-size: 11px; margin: 10px 0 0; }
+
+/* ---------- fundamentals deep-dive sections ---------- */
+.fund-sec-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
+.fund-shareholding, .fund-quarters, .fund-docs { margin-top: 14px; border-top: 1px solid var(--gridline); padding-top: 10px; }
+.sh-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sh-chips span { background: var(--surface-2); border-radius: 8px; padding: 4px 10px; font-size: 12px; color: var(--text-secondary); }
+.sh-chips strong { color: var(--text-primary); }
+.sh-chips em { font-style: normal; font-size: 11px; }
+.fund-q-scroll { overflow-x: auto; }
+.fund-q-scroll table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.fund-q-scroll th, .fund-q-scroll td { padding: 3px 8px; text-align: right; white-space: nowrap; }
+.fund-q-scroll th:first-child, .fund-q-scroll td:first-child { text-align: left; color: var(--text-muted); padding-left: 0; }
+.fund-q-scroll thead th { color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--gridline); }
+.fund-doc-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.fund-doc-links a { font-size: 12px; color: var(--series-blue); text-decoration: none; background: var(--surface-2); padding: 4px 10px; border-radius: 8px; }
