@@ -3,35 +3,42 @@ import "./index.css";
 import "./app.css";
 import { API_BASE, api, clearToken, getToken } from "./api";
 import { Landing } from "./Landing";
-import { onToast, toast } from "./toast";
-import { SettingsPanel } from "./components/SettingsPanel";
-import { downloadHistoryCsv } from "./api";
+import { marketLine } from "./lang";
+import { onToast } from "./toast";
 import { AlertBanner } from "./components/AlertBanner";
-import { BacktestPanel } from "./components/BacktestPanel";
-import { ChartPanel } from "./components/ChartPanel";
-import { HistoryTable } from "./components/HistoryTable";
-import { IdeaCard } from "./components/IdeaCard";
-import { MarketStatusBadge } from "./components/MarketStatusBadge";
-import { PositionCard } from "./components/PositionCard";
-import { RegimeCard } from "./components/RegimeCard";
-import { StatTile } from "./components/StatTile";
-import { Watchlist } from "./components/Watchlist";
-import type { HistoryRow } from "./types";
+import { ChartView } from "./views/ChartView";
+import { Journal } from "./views/Journal";
+import { More } from "./views/More";
+import { Today } from "./views/Today";
+import type { AlertLevel, HistoryRow } from "./types";
 import { useLive } from "./useLive";
 
-type Tab = "trade" | "backtest" | "history" | "settings";
+type Tab = "today" | "chart" | "journal" | "more";
+
+const TABS: { key: Tab; icon: string; label: string }[] = [
+  { key: "today", icon: "🏠", label: "Today" },
+  { key: "chart", icon: "📈", label: "Charts" },
+  { key: "journal", icon: "📒", label: "Journal" },
+  { key: "more", icon: "☰", label: "More" },
+];
 
 function App() {
   const [authed, setAuthed] = useState(() => Boolean(getToken()));
   if (!authed) {
     return <Landing onLogin={() => setAuthed(true)} />;
   }
-  return <Dashboard onLogout={() => { api.logout(); clearToken(); setAuthed(false); }} />;
+  return <Dashboard onLogout={() => { clearToken(); setAuthed(false); }} />;
 }
 
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   const { snapshot, connected, alerts, dismissAlert, prices, market } = useLive();
-  const [clientAlerts, setClientAlerts] = useState<{ id: number; level: "info" | "success" | "warning" | "danger"; message: string; at: number }[]>([]);
+  const [clientAlerts, setClientAlerts] = useState<
+    { id: number; level: AlertLevel; message: string; at: number }[]
+  >([]);
+  const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [tab, setTab] = useState<Tab>("today");
+  const [slowConnect, setSlowConnect] = useState(false);
+
   useEffect(() => {
     let seq = 100000;
     return onToast((t) => {
@@ -40,11 +47,6 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       setTimeout(() => setClientAlerts((prev) => prev.filter((a) => a.id !== id)), 6000);
     });
   }, []);
-  const [history, setHistory] = useState<HistoryRow[]>([]);
-  const [pauseBusy, setPauseBusy] = useState(false);
-  const [slowConnect, setSlowConnect] = useState(false);
-  const [tab, setTab] = useState<Tab>("trade");
-  const [selected, setSelected] = useState("");
 
   useEffect(() => {
     if (snapshot) return;
@@ -53,46 +55,20 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   }, [snapshot]);
 
   useEffect(() => {
-    api.history(100).then((r) => setHistory(r.rows)).catch(() => {});
+    api.history(200).then((r) => setHistory(r.rows)).catch(() => {});
   }, [snapshot?.day_stats.closed_today, snapshot?.day_stats.realised_pnl]);
-
-  // default chart symbol: first open position, else first pending idea, else first watchlist entry
-  useEffect(() => {
-    if (selected || !snapshot) return;
-    setSelected(snapshot.positions[0]?.symbol ?? snapshot.pending[0]?.symbol ?? snapshot.watchlist[0] ?? "");
-  }, [snapshot, selected]);
-
-  const togglePause = async () => {
-    if (!snapshot) return;
-    setPauseBusy(true);
-    try {
-      await (snapshot.paused ? api.resume() : api.pause());
-    } finally {
-      setPauseBusy(false);
-    }
-  };
-
-  const pnlCurve = history
-    .filter((r) => r.status === "CLOSED")
-    .slice()
-    .reverse()
-    .reduce<number[]>((acc, r) => {
-      const prev = acc.length ? acc[acc.length - 1] : 0;
-      acc.push(prev + (r.pnl ?? 0));
-      return acc;
-    }, []);
 
   if (!snapshot) {
     return (
       <div className="loading-screen">
         <div className="loading-box">
-          <p>{connected ? "Loading…" : "Connecting to engine…"}</p>
+          <p>Connecting to your bot…</p>
           {slowConnect && (
             <p className="loading-hint">
-              Can't reach the backend at <code>{API_BASE}</code>.
+              Can't reach the engine at <code>{API_BASE}</code>.
               {API_BASE.includes("localhost")
-                ? " This deployed dashboard is pointing at localhost — set the VITE_API_URL (and VITE_WS_URL) environment variables in Vercel to your backend's public URL and redeploy."
-                : " Check that the backend is running and that its CORS_ORIGINS includes this site's URL."}
+                ? " This deployed app points at localhost — set VITE_API_URL in Vercel."
+                : " It may be waking from sleep (about a minute) — this page will connect by itself."}
             </p>
           )}
         </div>
@@ -100,132 +76,68 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     );
   }
 
+  const m = market ?? snapshot.market;
+  const live = snapshot.mode === "LIVE";
+
   return (
     <>
-      <AlertBanner alerts={[...alerts, ...clientAlerts]} onDismiss={(id) => { dismissAlert(id); setClientAlerts((prev) => prev.filter((a) => a.id !== id)); }} />
-      <header className="app-header">
-        <div className="header-top">
-          <div className="header-brand">
-            <h1>Trading Assistant</h1>
-            <MarketStatusBadge market={market ?? snapshot.market} />
-          </div>
-          <div className="header-meta">
-            <span className={`mode-badge ${snapshot.mode === "LIVE" ? "good" : "warning"}`}>
-              {snapshot.mode === "LIVE" ? "LIVE" : "DEMO"}
-            </span>
-            <button className="btn btn-ghost pause-btn" disabled={pauseBusy} onClick={togglePause}>
-              {snapshot.paused ? "▶ Resume" : "⏸ Pause"}
-            </button>
-            <button className="btn btn-ghost pause-btn" onClick={onLogout} title="Sign out">
-              ⎋
-            </button>
-            <span className={`conn-dot ${connected ? "conn-on" : "conn-off"}`} title={connected ? "live" : "reconnecting"} />
-          </div>
-        </div>
-        {!connected && (
-          <p className="demo-banner disconnect-banner">
-            Reconnecting to the engine… prices and alerts are paused (last data may be stale).
-          </p>
-        )}
-        {snapshot.mode !== "LIVE" && (
-          <p className="demo-banner">
-            DEMO DATA — synthetic random-walk prices for trying the app. Nothing here is a real
-            market quote. Add Groww credentials on the server to go live.
-          </p>
-        )}
-        <nav className="tab-bar">
-          {(
-            [
-              ["trade", "Trade"],
-              ["backtest", "Backtest"],
-              ["history", "History"],
-              ["settings", "Settings"],
-            ] as [Tab, string][]
-          ).map(([key, label]) => (
-            <button key={key} className={`tab-btn ${tab === key ? "active" : ""}`} onClick={() => setTab(key)}>
-              {label}
-            </button>
-          ))}
-        </nav>
+      <AlertBanner
+        alerts={[...alerts, ...clientAlerts]}
+        onDismiss={(id) => {
+          dismissAlert(id);
+          setClientAlerts((prev) => prev.filter((a) => a.id !== id));
+        }}
+      />
+
+      <header className="topbar">
+        <span className="topbar-title">Trading Assistant</span>
+        <span className={`status-pill ${live ? "pill-live" : "pill-demo"}`}>
+          <span className={`conn-dot ${connected ? "conn-on" : "conn-off"}`} />
+          {live ? "LIVE" : "DEMO"} · {marketLine(m).replace("Market is ", "").replace("Market ", "")}
+        </span>
       </header>
 
+      {!connected && (
+        <p className="thin-banner thin-danger">Reconnecting… data is paused.</p>
+      )}
+      {!live && (
+        <p className="thin-banner thin-warn">
+          Practice mode — these are fake prices so you can explore safely.
+        </p>
+      )}
+      {snapshot.paused && (
+        <p className="thin-banner thin-warn">New ideas are paused — resume under More.</p>
+      )}
+
       <main className="app-main">
-        {tab === "trade" && (
-          <div className="trade-grid">
-            <div className="pane-chart">
-              {selected && <ChartPanel symbol={selected} snapshot={snapshot} prices={prices} />}
-            </div>
-
-            <aside className="pane-watchlist">
-              <Watchlist snapshot={snapshot} prices={prices} selected={selected} onSelect={setSelected} />
-            </aside>
-
-            <div className="pane-rail">
-              <RegimeCard ctx={snapshot.context} />
-              <div className="stat-row">
-                <StatTile
-                  label="Today's PnL"
-                  value={`₹${snapshot.day_stats.realised_pnl.toLocaleString("en-IN")}`}
-                  valueColor={snapshot.day_stats.realised_pnl >= 0 ? "var(--good)" : "var(--critical)"}
-                  trend={pnlCurve.length >= 2 ? pnlCurve : undefined}
-                />
-                <StatTile label="Closed today" value={snapshot.day_stats.closed_today} />
-                <StatTile label="Open" value={snapshot.positions.length} />
-              </div>
-
-              <section className="section">
-                <h2>Pending ideas {snapshot.pending.length > 0 && `(${snapshot.pending.length})`}</h2>
-                {snapshot.pending.length === 0 ? (
-                  <p className="text-muted empty-note">No pending ideas right now.</p>
-                ) : (
-                  snapshot.pending.map((idea) => (
-                    <div key={idea.idea_id} onClick={() => setSelected(idea.symbol)}>
-                      <IdeaCard idea={idea} />
-                    </div>
-                  ))
-                )}
-              </section>
-
-              <section className="section">
-                <h2>Open positions {snapshot.positions.length > 0 && `(${snapshot.positions.length})`}</h2>
-                {snapshot.positions.length === 0 ? (
-                  <p className="text-muted empty-note">Nothing open — flat.</p>
-                ) : (
-                  snapshot.positions.map((idea) => (
-                    <div key={idea.idea_id} onClick={() => setSelected(idea.symbol)}>
-                      <PositionCard idea={idea} />
-                    </div>
-                  ))
-                )}
-              </section>
-            </div>
-          </div>
+        {tab === "today" && <Today snapshot={snapshot} market={market} />}
+        {tab === "chart" && <ChartView snapshot={snapshot} prices={prices} />}
+        {tab === "journal" && <Journal rows={history} />}
+        {tab === "more" && (
+          <More
+            snapshot={snapshot}
+            onLogout={onLogout}
+            paused={snapshot.paused}
+            onTogglePause={() => (snapshot.paused ? api.resume() : api.pause())}
+          />
         )}
-
-        {tab === "backtest" && <BacktestPanel snapshot={snapshot} />}
-
-        {tab === "settings" && <SettingsPanel />}
-
-        {tab === "history" && (
-          <section className="section">
-            <div className="section-head">
-              <h2>Trade history</h2>
-              <button className="btn btn-ghost" onClick={() => downloadHistoryCsv().catch(() => toast("danger", "CSV export failed"))}>
-                ⬇ CSV
-              </button>
-            </div>
-            {history.length === 0 ? (
-              <p className="text-muted empty-note">No journaled trades yet.</p>
-            ) : (
-              <HistoryTable rows={history} />
-            )}
-          </section>
-        )}
-
-        <footer className="app-footer text-muted">
-          Ideas only — you place every trade yourself. Watchlist: {snapshot.watchlist.join(", ")}
-        </footer>
       </main>
+
+      <nav className="bottom-nav" aria-label="Main">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            className={`nav-btn ${tab === t.key ? "active" : ""}`}
+            onClick={() => setTab(t.key)}
+            aria-current={tab === t.key ? "page" : undefined}
+          >
+            <span className="nav-icon" aria-hidden>
+              {t.icon}
+            </span>
+            {t.label}
+          </button>
+        ))}
+      </nav>
     </>
   );
 }

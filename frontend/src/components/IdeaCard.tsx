@@ -1,88 +1,117 @@
 import { useState } from "react";
 import { api } from "../api";
+import { confidenceLabel, horizonLabel, riskLine, rupees } from "../lang";
 import { toast } from "../toast";
 import type { Idea } from "../types";
 
+/** A new trade idea, redesigned to read top-to-bottom like a sentence:
+ * what to buy → at what levels → what it costs/risks → confirm or ignore. */
 export function IdeaCard({ idea }: { idea: Idea }) {
   const [qty, setQty] = useState(String(idea.qty));
   const [price, setPrice] = useState(String(idea.entry));
   const [busy, setBusy] = useState(false);
-  const long = idea.side === "BUY";
+  const [confirming, setConfirming] = useState(false);
 
   const buy = async () => {
     const q = Number(qty);
     const p = Number(price);
     if (!Number.isFinite(q) || q <= 0 || !Number.isInteger(q)) {
-      toast("warning", "Quantity must be a positive whole number.");
+      toast("warning", "Shares must be a positive whole number.");
       return;
     }
     if (!Number.isFinite(p) || p <= 0) {
-      toast("warning", "Fill price must be a positive number.");
+      toast("warning", "Price must be a positive number.");
       return;
     }
     if (Math.abs(p - idea.entry) / idea.entry > 0.2) {
-      toast("warning", `Fill price ₹${p} is >20% away from the idea's entry ₹${idea.entry} — double-check it.`);
+      toast("warning", `That price is far from the suggested ${rupees(idea.entry)} — double-check it.`);
       return;
     }
     setBusy(true);
     try {
       await api.buyIdea(idea.symbol, q, p);
-      toast("success", `Tracking ${idea.symbol}: ${q} @ ₹${p}`);
+      toast("success", `Got it — watching ${idea.symbol} for you now.`);
     } catch {
-      toast("danger", `Couldn't confirm ${idea.symbol} — check the connection and retry.`);
+      toast("danger", `Couldn't save that — check your connection and tap again.`);
     } finally {
       setBusy(false);
     }
   };
+
   const skip = async () => {
-    if (!window.confirm(`Dismiss the ${idea.symbol} idea? It won't re-fire today.`)) return;
     setBusy(true);
     try {
       await api.skipIdea(idea.symbol);
+      toast("info", `${idea.symbol} ignored for today.`);
     } catch {
-      toast("danger", `Couldn't skip ${idea.symbol} — retry.`);
+      toast("danger", `Couldn't ignore ${idea.symbol} — tap again.`);
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="card">
-      <div className="card-head">
-        <span className={`side-badge ${long ? "good" : "critical"}`}>{idea.side}</span>
-        <span className="symbol">{idea.symbol}</span>
-        <span className="horizon-tag">{idea.horizon === "intraday" ? "MIS" : "CNC"}</span>
-        <span className="confidence">{idea.confidence}</span>
+    <div className="idea-card">
+      <div className="idea-headline">
+        <span className="idea-action">BUY</span>
+        <span className="idea-symbol">{idea.symbol}</span>
+        <span className="idea-price">~{rupees(idea.entry)}</span>
       </div>
-      <div className="levels">
-        <span>Entry ₹{idea.entry.toLocaleString("en-IN")}</span>
-        <span className="critical">Stop ₹{idea.stop.toLocaleString("en-IN")}</span>
-        <span className="good">Target ₹{idea.target.toLocaleString("en-IN")}</span>
-        <span className="text-muted">R:R {idea.risk_reward}</span>
+      <p className="idea-sub">
+        {horizonLabel(idea.horizon)}
+        {idea.confidence && confidenceLabel(idea.confidence) ? ` · ${confidenceLabel(idea.confidence)}` : ""}
+      </p>
+
+      <div className="level-strip">
+        <div className="level">
+          <span className="level-tag critical">If it falls, sell at</span>
+          <strong>{rupees(idea.stop)}</strong>
+        </div>
+        <div className="level">
+          <span className="level-tag good">Profit goal</span>
+          <strong>{rupees(idea.target)}</strong>
+        </div>
+        <div className="level">
+          <span className="level-tag">Suggested</span>
+          <strong>{idea.qty} shares</strong>
+        </div>
       </div>
-      {(idea.why || idea.reason) && <p className="why">{idea.why || idea.reason}</p>}
-      <div className="idea-actions">
-        <input
-          className="num-input"
-          type="number"
-          value={qty}
-          onChange={(e) => setQty(e.target.value)}
-          aria-label="Quantity bought"
-        />
-        <input
-          className="num-input"
-          type="number"
-          value={price}
-          onChange={(e) => setPrice(e.target.value)}
-          aria-label="Fill price"
-        />
-        <button className="btn btn-good" disabled={busy} onClick={buy}>
-          Bought
-        </button>
-        <button className="btn btn-ghost" disabled={busy} onClick={skip}>
-          Skip
-        </button>
-      </div>
+
+      <p className="idea-risk">{riskLine(idea)}</p>
+      {(idea.why || idea.reason) && <p className="idea-why">{idea.why || idea.reason}</p>}
+
+      {!confirming ? (
+        <div className="idea-buttons">
+          <button className="btn-big btn-buy" onClick={() => setConfirming(true)}>
+            I bought this
+          </button>
+          <button className="btn-big btn-ignore" disabled={busy} onClick={skip}>
+            Ignore
+          </button>
+        </div>
+      ) : (
+        <div className="confirm-box">
+          <p className="confirm-title">Tell me your actual fill:</p>
+          <div className="confirm-fields">
+            <label>
+              Shares bought
+              <input type="number" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} />
+            </label>
+            <label>
+              At price (₹)
+              <input type="number" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} />
+            </label>
+          </div>
+          <div className="idea-buttons">
+            <button className="btn-big btn-buy" disabled={busy} onClick={buy}>
+              {busy ? "Saving…" : "Start watching it"}
+            </button>
+            <button className="btn-big btn-ignore" disabled={busy} onClick={() => setConfirming(false)}>
+              Back
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
