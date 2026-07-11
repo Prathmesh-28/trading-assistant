@@ -74,6 +74,12 @@ class Journal:
         self._conn.execute(_SCHEMA)
         self._conn.execute(_SETTINGS_SCHEMA)
         self._conn.execute(_WALLET_SCHEMA)
+        # migrate pre-existing DBs: trade-review columns (added 2026-07)
+        for col, typ in (("notes", "TEXT"), ("tags", "TEXT"), ("rating", "INTEGER")):
+            try:
+                self._conn.execute(f"ALTER TABLE ideas ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError:
+                pass  # column already exists
         self._conn.commit()
 
     # ------------------------------------------------------------- wallet
@@ -165,9 +171,96 @@ class Journal:
             )
             self._conn.commit()
 
+    _REVIEW_COLS = ("notes", "tags", "rating")
+
     _COLUMNS = ["id", "created_at", "symbol", "side", "horizon", "entry", "stop",
                 "target", "qty", "confidence", "reason", "why", "status",
-                "fill_qty", "fill_price", "exit_price", "pnl", "updated_at"]
+                "fill_qty", "fill_price", "exit_price", "pnl", "updated_at",
+                "notes", "tags", "rating"]
+
+    def review_update(self, idea_id: int, notes=None, tags=None, rating=None) -> bool:
+        """Journal a closed trade: free-text notes, comma tags, 1-5 self-rating."""
+        sets, vals = [], []
+        if notes is not None:
+            sets.append("notes=?"); vals.append(str(notes)[:2000])
+        if tags is not None:
+            sets.append("tags=?"); vals.append(",".join(t.strip() for t in tags)[:400]
+                                              if isinstance(tags, list) else str(tags)[:400])
+        if rating is not None:
+            sets.append("rating=?"); vals.append(max(1, min(5, int(rating))))
+        if not sets:
+            return False
+        vals.append(idea_id)
+        with self._lock:
+            cur = self._conn.execute(f"UPDATE ideas SET {', '.join(sets)} WHERE id=?", vals)
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def analytics(self, days: int = 90) -> dict:
+        """Control-center numbers from closed trades: equity curve, win rate,
+        breakdowns by symbol / horizon / weekday, streaks, tag frequencies."""
+        from datetime import timedelta
+        since = (datetime.now(IST) - timedelta(days=days)).isoformat()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT created_at, updated_at, symbol, horizon, pnl, tags, rating, reason"
+                " FROM ideas WHERE status='CLOSED' AND updated_at >= ? ORDER BY updated_at",
+                (since,),
+            ).fetchall()
+        curve, cum = [], 0.0
+        by_day, by_symbol, by_horizon, by_weekday, tag_counts = {}, {}, {}, {}, {}
+        wins = losses = 0
+        win_sum = loss_sum = 0.0
+        streak = best_win_streak = worst_loss_streak = 0
+        cutoff30 = (datetime.now(IST) - timedelta(days=30)).isoformat()
+        w30 = t30 = 0
+        for created, updated, sym, hz, pnl, tags, rating, reason in rows:
+            pnl = pnl or 0.0
+            day = (updated or created)[:10]
+            by_day[day] = by_day.get(day, 0.0) + pnl
+            for bucket, key in ((by_symbol, sym), (by_horizon, hz)):
+                b = bucket.setdefault(key, {"trades": 0, "pnl": 0.0, "wins": 0})
+                b["trades"] += 1; b["pnl"] += pnl; b["wins"] += 1 if pnl > 0 else 0
+            try:
+                wd = datetime.fromisoformat((updated or created)[:19]).strftime("%a")
+                b = by_weekday.setdefault(wd, {"trades": 0, "pnl": 0.0, "wins": 0})
+                b["trades"] += 1; b["pnl"] += pnl; b["wins"] += 1 if pnl > 0 else 0
+            except ValueError:
+                pass
+            if pnl > 0:
+                wins += 1; win_sum += pnl
+                streak = streak + 1 if streak >= 0 else 1
+                best_win_streak = max(best_win_streak, streak)
+            elif pnl < 0:
+                losses += 1; loss_sum += pnl
+                streak = streak - 1 if streak <= 0 else -1
+                worst_loss_streak = min(worst_loss_streak, streak)
+            if (updated or created) >= cutoff30:
+                t30 += 1; w30 += 1 if pnl > 0 else 0
+            for t in (tags or "").split(","):
+                t = t.strip()
+                if t:
+                    tag_counts[t] = tag_counts.get(t, 0) + 1
+        for day in sorted(by_day):
+            cum += by_day[day]
+            curve.append({"date": day, "pnl": round(by_day[day], 2), "cum_pnl": round(cum, 2)})
+        total = wins + losses
+        return {
+            "days": days,
+            "closed_trades": total,
+            "win_rate_pct": round(wins / total * 100, 1) if total else None,
+            "win_rate_30d_pct": round(w30 / t30 * 100, 1) if t30 else None,
+            "avg_win": round(win_sum / wins, 2) if wins else None,
+            "avg_loss": round(loss_sum / losses, 2) if losses else None,
+            "profit_factor": round(win_sum / abs(loss_sum), 2) if loss_sum else None,
+            "best_win_streak": best_win_streak,
+            "worst_loss_streak": abs(worst_loss_streak),
+            "equity_curve": curve[-60:],
+            "by_symbol": by_symbol,
+            "by_horizon": by_horizon,
+            "by_weekday": by_weekday,
+            "tag_counts": tag_counts,
+        }
 
     def history(self, limit: int = 200) -> list[dict]:
         """Most recent ideas first — for the dashboard's trade log + PnL curve."""

@@ -544,6 +544,8 @@ class RecommendEngine:
         "max_open_positions": int,
         "max_portfolio_risk_pct": float,
         "daily_loss_limit_pct": float,
+        "alerts_muted": bool,
+        "disabled_strategies": list,
         "fundamental_gate_enabled": bool,
         "min_fundamental_score": float,
         "max_fundamental_de": float,
@@ -560,7 +562,9 @@ class RecommendEngine:
             if caster is None:
                 continue
             try:
-                if caster is list:
+                if key == "disabled_strategies":
+                    value = [str(s).strip().lower() for s in value if str(s).strip()]
+                elif caster is list:
                     value = [str(s).strip().upper() for s in value if str(s).strip()]
                 elif caster is bool:
                     value = bool(value)
@@ -576,7 +580,13 @@ class RecommendEngine:
         if caster is None:
             return f"'{key}' is not editable at runtime"
         try:
-            if caster is list:
+            if key == "disabled_strategies":
+                if not isinstance(value, list):
+                    return "disabled_strategies must be a list of strategy keys"
+                value = [str(s).strip().lower()[:30] for s in value if str(s).strip()]
+                if len(value) > 20:
+                    return "too many disabled strategies"
+            elif caster is list:
                 if not isinstance(value, list):
                     return "watchlist must be a list of symbols"
                 value = [str(s).strip().upper() for s in value if str(s).strip()]
@@ -645,6 +655,7 @@ class RecommendEngine:
                         "paper": self._paper()},
             "market": market_phase(datetime.now(IST)),
             "quotes": self._quotes(),
+            "settings": self.settings_view(),
             "server_time": datetime.now(IST).isoformat(),
         }
 
@@ -683,6 +694,10 @@ class RecommendEngine:
         return risk
 
     async def publish(self, sig: Signal) -> None:
+        muted = [k for k in self.s.disabled_strategies if k in sig.reason.lower()]
+        if muted:
+            log.info("%s idea skipped — strategy muted (%s)", sig.symbol, muted[0])
+            return
         qty = suggested_qty(sig.entry, sig.stop, self.s, capital=self.equity(),
                             risk_pct=self.effective_risk_pct())
         if qty <= 0:

@@ -100,6 +100,13 @@ class Settings:
     # on, fundamentals prefer screener.in and fall back to yfinance.
     screener_scrape_enabled: bool = field(default_factory=lambda: _b("SCREENER_SCRAPE_ENABLED", False))
 
+    # Control-center toggles: mute all Telegram pushes without stopping the
+    # engine; disable individual strategies by keyword (matched vs idea reason).
+    alerts_muted: bool = field(default_factory=lambda: _b("ALERTS_MUTED", False))
+    disabled_strategies: list = field(default_factory=lambda: [
+        s.strip().lower() for s in _s("DISABLED_STRATEGIES").split(",") if s.strip()
+    ])
+
     # Backtest slippage assumption, % of turnover per side
     slippage_pct: float = field(default_factory=lambda: _f("SLIPPAGE_PCT", 0.05))
 

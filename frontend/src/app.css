@@ -2146,3 +2146,98 @@
 @media (max-width: 360px) {
   .topbar-equity { display: none; }
 }
+
+/* =================== Alphastream terminal components =================== */
+
+/* ticker tape */
+.ticker-wrap {
+  background: var(--surface-1); border-bottom: 1px solid var(--border);
+  overflow: hidden; white-space: nowrap; height: 32px;
+  display: flex; align-items: center;
+}
+.ticker-track {
+  display: flex; gap: 30px; padding-left: 100%;
+  animation: tickerscroll 40s linear infinite;
+  font-size: 12px;
+}
+@keyframes tickerscroll { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+.tick { display: inline-flex; gap: 7px; align-items: center; color: var(--text-secondary); }
+.tick b { color: var(--text-primary); font-weight: 500; }
+@media (prefers-reduced-motion: reduce) { .ticker-track { animation: none; padding-left: 0; } }
+
+/* stat cards row */
+.stats-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (min-width: 700px) { .stats-row { grid-template-columns: repeat(5, 1fr); } }
+.stat-card {
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px;
+}
+.stat-label {
+  font-size: 11px; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.4px; margin-bottom: 6px; display: block;
+}
+.stat-value { font-size: 19px; font-weight: 500; letter-spacing: -0.3px; display: block; }
+.stat-sub { font-size: 11.5px; color: var(--text-secondary); margin-top: 3px; font-family: var(--font-mono); }
+
+/* risk strip */
+.risk-strip {
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 16px; display: flex; align-items: center; gap: 14px;
+}
+.risk-label { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+.risk-track { flex: 1; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.risk-fill { height: 100%; border-radius: 3px; transition: width 0.4s; }
+.risk-value { font-size: 12px; color: var(--warning); white-space: nowrap; }
+
+/* strategy manager */
+.strategy-panel { display: flex; flex-direction: column; gap: 18px; }
+.strategy-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 8px;
+}
+.strategy-id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.strategy-id strong { font-size: 13.5px; }
+.strategy-id span { font-size: 11.5px; color: var(--text-muted); }
+.strategy-stats { font-size: 11px !important; }
+.strategy-stats em { font-style: normal; }
+
+/* telegram panel */
+.telegram-panel { display: flex; flex-direction: column; gap: 10px; }
+.tg-row {
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; font-size: 13px;
+}
+.tg-row span { color: var(--text-secondary); }
+
+/* analytics */
+.analytics { display: flex; flex-direction: column; gap: 16px; }
+.ana-block { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.equity-svg { width: 100%; height: 80px; display: block; }
+.ana-cum { margin: 8px 0 0; font-size: 12.5px; }
+.ana-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.ana-grid .stat-value { font-size: 16px; }
+.ana-table { display: flex; flex-direction: column; }
+.ana-row {
+  display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: baseline;
+  padding: 7px 0; border-bottom: 1px solid var(--gridline); font-size: 13px;
+}
+.ana-row:last-child { border-bottom: none; }
+.ana-key { font-weight: 500; }
+.seg-2 { grid-template-columns: repeat(2, 1fr); }
+
+/* stats span the full width; wallet stays first on phones */
+.today-top { display: flex; flex-direction: column; gap: 12px; }
+.today { }
+@media (max-width: 1099px) {
+  .today-rail { order: 1; }
+  .today-top { order: 2; }
+  .today-main { order: 3; }
+}
+@media (min-width: 1100px) {
+  .today { grid-template-rows: auto 1fr; }
+  .today-top { grid-column: 1 / -1; grid-row: 1; }
+  .today-main { grid-column: 1; grid-row: 2; }
+  .today-rail { grid-column: 2; grid-row: 2; }
+}

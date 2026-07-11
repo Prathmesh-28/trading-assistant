@@ -2,9 +2,11 @@ import { useState } from "react";
 import { api } from "../api";
 import { BacktestPanel } from "../components/BacktestPanel";
 import { SettingsPanel } from "../components/SettingsPanel";
+import { StrategyPanel } from "../components/StrategyPanel";
+import { TelegramPanel } from "../components/TelegramPanel";
 import type { Snapshot } from "../types";
 
-type Section = "menu" | "settings" | "backtest" | "help";
+type Section = "menu" | "settings" | "backtest" | "help" | "strategies" | "telegram";
 
 /** Everything that isn't daily trading lives here, one level deep. */
 export function More({
@@ -29,12 +31,22 @@ export function More({
         {section === "settings" && <SettingsPanel />}
         {section === "backtest" && <BacktestPanel snapshot={snapshot} />}
         {section === "help" && <HowItWorks />}
+        {section === "strategies" && <StrategyPanel />}
+        {section === "telegram" && <TelegramPanel />}
       </div>
     );
   }
 
   return (
     <div className="more">
+      <button className="more-item" onClick={() => setSection("strategies")}>
+        <span>🧠 Strategies</span>
+        <span className="more-hint">Every playbook, its record, on/off switches</span>
+      </button>
+      <button className="more-item" onClick={() => setSection("telegram")}>
+        <span>📨 Phone alerts</span>
+        <span className="more-hint">Telegram health & the mute switch</span>
+      </button>
       <button className="more-item" onClick={() => setSection("help")}>
         <span>❓ How this works</span>
         <span className="more-hint">The daily loop, in one minute</span>

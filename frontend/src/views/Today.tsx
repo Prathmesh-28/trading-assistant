@@ -1,6 +1,8 @@
 import { marketLine, regimeLabel, rupees } from "../lang";
 import type { MarketStatus, Snapshot } from "../types";
 import { IdeaCard } from "../components/IdeaCard";
+import { RiskStrip } from "../components/RiskStrip";
+import { StatStrip } from "../components/StatStrip";
 import { IndexStrip } from "../components/IndexStrip";
 import { PositionRow } from "../components/PositionRow";
 import { WalletCard } from "../components/WalletCard";
@@ -26,6 +28,10 @@ export function Today({ snapshot, market, onBrowse }: { snapshot: Snapshot; mark
 
   return (
     <div className="today">
+      <div className="today-top">
+        <StatStrip snapshot={snapshot} />
+        <RiskStrip snapshot={snapshot} />
+      </div>
       <aside className="today-rail">
         {snapshot.wallet && <WalletCard wallet={snapshot.wallet} paper={exec.paper} />}
         <IndexStrip />

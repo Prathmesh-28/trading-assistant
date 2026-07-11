@@ -515,6 +515,100 @@ async def fundamentals_ep(symbol: str):
     return payload
 
 
+# ------------------------------------------------------------------ control center
+
+# Strategy registry: keyword = what disabled_strategies matches against the
+# idea's reason text; the engine's actual logic lives in strategy.py/positional.py.
+_STRATEGY_INFO = [
+    {"key": "opening range", "name": "ORB + VWAP breakout", "horizon": "intraday",
+     "desc": "First-bar range breakout above VWAP (SSRN 4729284)"},
+    {"key": "gap-and-go", "name": "Gap-and-Go", "horizon": "intraday",
+     "desc": ">2% gap with 2x volume, riding the momentum"},
+    {"key": "squeeze", "name": "Squeeze release", "horizon": "intraday",
+     "desc": "Bollinger-inside-Keltner compression firing"},
+    {"key": "ema20", "name": "Trend pullback (EMA20/50)", "horizon": "positional",
+     "desc": "Uptrend pullback to the 20-day average"},
+    {"key": "donchian", "name": "Donchian-55 breakout", "horizon": "positional",
+     "desc": "Turtle-style 55-day-high breakout"},
+    {"key": "rsi", "name": "RSI dips (RSI-2 / RSI-14)", "horizon": "positional",
+     "desc": "Connors oversold snapback in an uptrend"},
+    {"key": "golden cross", "name": "Golden Cross", "horizon": "positional",
+     "desc": "50-day average crossing above 200-day"},
+    {"key": "macd", "name": "MACD turn", "horizon": "positional",
+     "desc": "MACD crossing up from below zero"},
+    {"key": "momentum", "name": "12-1 momentum rotation", "horizon": "positional",
+     "desc": "Monthly top-3 momentum basket"},
+]
+
+
+@app.get("/api/analytics")
+async def analytics(days: int = 90):
+    return engine.journal.analytics(max(7, min(365, days)))
+
+
+class ReviewBody(BaseModel):
+    notes: Optional[str] = None
+    tags: Optional[str] = None
+    rating: Optional[int] = None
+
+
+@app.patch("/api/journal/{idea_id}")
+async def review_trade(idea_id: int, body: ReviewBody):
+    ok = engine.journal.review_update(idea_id, body.notes, body.tags, body.rating)
+    if not ok:
+        raise HTTPException(404, "trade not found or nothing to update")
+    return {"ok": True}
+
+
+@app.get("/api/strategies")
+async def strategies():
+    disabled = [k.lower() for k in engine.s.disabled_strategies]
+    hist = engine.journal.history(500)
+    out = []
+    for info in _STRATEGY_INFO:
+        rows = [r for r in hist if info["key"] in (r.get("reason") or "").lower()]
+        closed = [r for r in rows if r["status"] == "CLOSED"]
+        wins = sum(1 for r in closed if (r.get("pnl") or 0) > 0)
+        out.append({
+            **info,
+            "enabled": info["key"] not in disabled,
+            "signals": len(rows),
+            "closed": len(closed),
+            "win_rate_pct": round(wins / len(closed) * 100, 1) if closed else None,
+            "pnl": round(sum(r.get("pnl") or 0 for r in closed), 2),
+        })
+    return {"strategies": out}
+
+
+class StrategyToggle(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/strategies/{key}/toggle")
+async def toggle_strategy(key: str, body: StrategyToggle):
+    keys = {i["key"] for i in _STRATEGY_INFO}
+    if key not in keys:
+        raise HTTPException(404, "unknown strategy")
+    disabled = [k for k in engine.s.disabled_strategies if k in keys]
+    if body.enabled:
+        disabled = [k for k in disabled if k != key]
+    elif key not in disabled:
+        disabled.append(key)
+    reply = engine.update_setting("disabled_strategies", disabled)
+    return {"ok": True, "reply": reply, "disabled": disabled}
+
+
+@app.get("/api/telegram/status")
+async def telegram_status():
+    from notifier import Notifier
+    return {
+        "configured": engine.s.has_telegram,
+        "muted": bool(getattr(engine.s, "alerts_muted", False)),
+        "last_sent_at": Notifier.last_sent_at or None,
+        "last_error": Notifier.last_error or None,
+    }
+
+
 # ------------------------------------------------------------------ screener
 
 from screener import PREBUILT, ScreenError, run_screen  # noqa: E402

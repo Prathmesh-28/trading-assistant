@@ -29,7 +29,11 @@ CommandHandler = Callable[[str, list[str]], Awaitable[str]]
 
 
 class Notifier:
+    last_sent_at: str = ""
+    last_error: str = ""
+
     def __init__(self, settings: Settings):
+        self._settings = settings
         self._settings = settings
         self._enabled = settings.has_telegram
         self._base = f"https://api.telegram.org/bot{settings.telegram_token}"
@@ -49,6 +53,9 @@ class Notifier:
         if not self._enabled:
             print(f"\n=== ALERT ===\n{text}\n=============")
             return
+        if getattr(self._settings, "alerts_muted", False):
+            log.info("telegram muted — dropped: %s", text[:60])
+            return
         for attempt in range(3):   # stop-hit alerts must not die on one blip
             try:
                 resp = await self._client.post(
@@ -57,11 +64,15 @@ class Notifier:
                           "disable_web_page_preview": True},
                 )
                 if resp.status_code == 200:
+                    from datetime import datetime as _dt
+                    Notifier.last_sent_at = _dt.now().isoformat(timespec="seconds")
+                    Notifier.last_error = ""
                     return
                 log.warning("telegram send failed (try %d): %s %s",
                             attempt + 1, resp.status_code, resp.text[:200])
             except httpx.HTTPError as e:
                 log.warning("telegram send error (try %d): %s", attempt + 1, e)
+                Notifier.last_error = str(e)[:120]
             await asyncio.sleep(1.5 * (attempt + 1))
 
     async def command_loop(self) -> None:

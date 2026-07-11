@@ -71,6 +71,7 @@ export interface Snapshot {
   day_stats: DayStats;
   market: MarketStatus;
   quotes: Record<string, Quote>;
+  settings?: Record<string, unknown>;
   server_time: string;
 }
 
@@ -191,6 +192,12 @@ export interface TunableSettings {
   max_position_value: number;
   max_open_positions: number;
   max_portfolio_risk_pct: number;
+  daily_loss_limit_pct: number;
+  alerts_muted: boolean;
+  disabled_strategies: string[];
+  fundamental_gate_enabled: boolean;
+  min_fundamental_score: number;
+  max_fundamental_de: number;
 }
 
 /* ---------- markets ---------- */
@@ -248,4 +255,33 @@ export interface Suggestion {
   mom_3m_pct: number | null;
   regime: string;
   reason: string;
+}
+
+export interface Analytics {
+  days: number;
+  closed_trades: number;
+  win_rate_pct: number | null;
+  win_rate_30d_pct: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  profit_factor: number | null;
+  best_win_streak: number;
+  worst_loss_streak: number;
+  equity_curve: { date: string; pnl: number; cum_pnl: number }[];
+  by_symbol: Record<string, { trades: number; pnl: number; wins: number }>;
+  by_horizon: Record<string, { trades: number; pnl: number; wins: number }>;
+  by_weekday: Record<string, { trades: number; pnl: number; wins: number }>;
+  tag_counts: Record<string, number>;
+}
+
+export interface StrategyInfo {
+  key: string;
+  name: string;
+  horizon: string;
+  desc: string;
+  enabled: boolean;
+  signals: number;
+  closed: number;
+  win_rate_pct: number | null;
+  pnl: number;
 }

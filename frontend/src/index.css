@@ -1,21 +1,35 @@
+/* Alphastream design language — dark-first terminal aesthetic.
+   Palette + type from the approved mockup: Space Grotesk (display),
+   Inter (body), JetBrains Mono (every number). */
+
 :root {
-  --surface-1: #1a1a19;
-  --surface-2: #232322;
-  --page: #0d0d0d;
-  --text-primary: #ffffff;
-  --text-secondary: #c3c2b7;
-  --text-muted: #898781;
-  --gridline: #2c2c2a;
-  --baseline: #383835;
-  --border: rgba(255, 255, 255, 0.1);
-  --series-blue: #3987e5;
-  --good: #0ca30c;
-  --warning: #fab219;
-  --serious: #ec835a;
-  --critical: #d03b3b;
+  --page: #0a0d11;
+  --surface-1: #10141a;
+  --surface-2: #161b22;
+  --gridline: #232a34;
+  --baseline: #313a46;
+  --border: #232a34;
+  --border-strong: #313a46;
+  --text-primary: #e8ebef;
+  --text-secondary: #8b95a3;
+  --text-muted: #565f6c;
+
+  --series-blue: #7c6ff0;          /* indigo accent */
+  --good: #3ecf8e;                 /* mint */
+  --good-dim: #1b4a38;
+  --critical: #ef5a52;             /* vermillion */
+  --critical-dim: #4a2320;
+  --warning: #f0a83b;              /* amber */
+  --warning-dim: #4a3a18;
+  --serious: #f0a83b;
+  --indigo-dim: #2a2660;
+
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
   color-scheme: dark light;
-  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 14px/1.5 var(--font-body);
   color: var(--text-primary);
   background: var(--page);
   -webkit-font-smoothing: antialiased;
@@ -23,43 +37,67 @@
 
 @media (prefers-color-scheme: light) {
   :root {
-    --surface-1: #fcfcfb;
-    --surface-2: #f2f1ee;
-    --page: #f9f9f7;
-    --text-primary: #0b0b0b;
-    --text-secondary: #52514e;
-    --text-muted: #898781;
-    --gridline: #e1e0d9;
-    --baseline: #c3c2b7;
-    --border: rgba(11, 11, 11, 0.1);
-    --series-blue: #2a78d6;
+    --page: #f6f7f9;
+    --surface-1: #ffffff;
+    --surface-2: #eef0f3;
+    --gridline: #dde1e7;
+    --baseline: #c6ccd5;
+    --border: #dde1e7;
+    --border-strong: #c6ccd5;
+    --text-primary: #14181e;
+    --text-secondary: #4b5563;
+    --text-muted: #8b95a3;
+    --series-blue: #5b4fd6;
+    --good: #0f9d6a;
+    --good-dim: #d7f2e6;
+    --critical: #d6423a;
+    --critical-dim: #fbe3e1;
+    --warning: #b97d17;
+    --warning-dim: #f8ecd4;
+    --indigo-dim: #e6e3fb;
   }
 }
 
 :root[data-theme="light"] {
-  --surface-1: #fcfcfb;
-  --surface-2: #f2f1ee;
-  --page: #f9f9f7;
-  --text-primary: #0b0b0b;
-  --text-secondary: #52514e;
-  --text-muted: #898781;
-  --gridline: #e1e0d9;
-  --baseline: #c3c2b7;
-  --border: rgba(11, 11, 11, 0.1);
-  --series-blue: #2a78d6;
+  --page: #f6f7f9;
+  --surface-1: #ffffff;
+  --surface-2: #eef0f3;
+  --gridline: #dde1e7;
+  --baseline: #c6ccd5;
+  --border: #dde1e7;
+  --border-strong: #c6ccd5;
+  --text-primary: #14181e;
+  --text-secondary: #4b5563;
+  --text-muted: #8b95a3;
+  --series-blue: #5b4fd6;
+  --good: #0f9d6a;
+  --good-dim: #d7f2e6;
+  --critical: #d6423a;
+  --critical-dim: #fbe3e1;
+  --warning: #b97d17;
+  --warning-dim: #f8ecd4;
+  --indigo-dim: #e6e3fb;
 }
 
 :root[data-theme="dark"] {
-  --surface-1: #1a1a19;
-  --surface-2: #232322;
-  --page: #0d0d0d;
-  --text-primary: #ffffff;
-  --text-secondary: #c3c2b7;
-  --text-muted: #898781;
-  --gridline: #2c2c2a;
-  --baseline: #383835;
-  --border: rgba(255, 255, 255, 0.1);
-  --series-blue: #3987e5;
+  --page: #0a0d11;
+  --surface-1: #10141a;
+  --surface-2: #161b22;
+  --gridline: #232a34;
+  --baseline: #313a46;
+  --border: #232a34;
+  --border-strong: #313a46;
+  --text-primary: #e8ebef;
+  --text-secondary: #8b95a3;
+  --text-muted: #565f6c;
+  --series-blue: #7c6ff0;
+  --good: #3ecf8e;
+  --good-dim: #1b4a38;
+  --critical: #ef5a52;
+  --critical-dim: #4a2320;
+  --warning: #f0a83b;
+  --warning-dim: #4a3a18;
+  --indigo-dim: #2a2660;
 }
 
 * {
@@ -79,12 +117,30 @@ body {
   background: var(--page);
 }
 
-/* broker-style desktop layout gets the full width */
+/* terminal desktop layout gets the full width */
 @media (min-width: 1024px) {
   #root {
     max-width: 1440px;
   }
 }
+
+h1, h2, h3, .topbar-title {
+  font-family: var(--font-display);
+}
+
+/* every number in the app reads as terminal data */
+.mono,
+.stat-value, .stock-quote strong, .stock-head-price strong, .fund-row strong,
+.fund-q-scroll td, .pick-score, .today-summary strong, .wallet-hero,
+.idea-levels, .chg-chip, .topbar-equity, .sh-chips strong, .fund-score,
+.tick, .risk-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
 
 button {
   font: inherit;

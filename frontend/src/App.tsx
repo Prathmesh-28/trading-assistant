@@ -7,6 +7,7 @@ import { Landing } from "./Landing";
 import { marketLine } from "./lang";
 import { onToast } from "./toast";
 import { AlertBanner } from "./components/AlertBanner";
+import { TickerTape } from "./components/TickerTape";
 import { Welcome } from "./components/Welcome";
 import { Markets } from "./views/Markets";
 import { Journal } from "./views/Journal";
@@ -124,6 +125,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       {snapshot.paused && (
         <p className="thin-banner thin-warn">New ideas are paused — resume under More.</p>
       )}
+
+      <TickerTape prices={prices} />
 
       <main className="app-main">
         {tab === "today" && <Today snapshot={snapshot} market={market} onBrowse={() => setTab("chart")} />}

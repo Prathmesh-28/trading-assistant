@@ -3,6 +3,7 @@ import { downloadHistoryCsv } from "../api";
 import { rupees } from "../lang";
 import { toast } from "../toast";
 import type { HistoryRow } from "../types";
+import { AnalyticsPanel } from "../components/AnalyticsPanel";
 
 const FILTERS = ["All", "Wins", "Losses", "Open", "Skipped"] as const;
 type Filter = (typeof FILTERS)[number];
@@ -11,6 +12,7 @@ type Filter = (typeof FILTERS)[number];
  * trade in plain words, CSV export for tax time. */
 export function Journal({ rows }: { rows: HistoryRow[] }) {
   const [filter, setFilter] = useState<Filter>("All");
+  const [view, setView] = useState<"trades" | "analytics">("trades");
 
   const filtered = useMemo(() => {
     switch (filter) {
@@ -31,8 +33,24 @@ export function Journal({ rows }: { rows: HistoryRow[] }) {
   const total = closed.reduce((s, r) => s + (r.pnl ?? 0), 0);
   const wins = closed.filter((r) => (r.pnl ?? 0) > 0).length;
 
+  if (view === "analytics") {
+    return (
+      <div className="journal">
+        <div className="seg-control seg-2" role="tablist">
+          <button role="tab" onClick={() => setView("trades")}>Trades</button>
+          <button role="tab" className="active">Analytics</button>
+        </div>
+        <AnalyticsPanel />
+      </div>
+    );
+  }
+
   return (
     <div className="journal">
+      <div className="seg-control seg-2" role="tablist">
+        <button role="tab" className="active">Trades</button>
+        <button role="tab" onClick={() => setView("analytics")}>Analytics</button>
+      </div>
       <div className="journal-stats">
         <div>
           <span className="sum-label">All-time booked</span>

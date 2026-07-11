@@ -1,4 +1,4 @@
-import type { BacktestJob, ChartData, HistoryRow, IndexQuote, MarketData, QuantStats, Snapshot, Suggestion, TunableSettings, Wallet } from "./types";
+import type { Analytics, StrategyInfo, BacktestJob, ChartData, HistoryRow, IndexQuote, MarketData, QuantStats, Snapshot, Suggestion, TunableSettings, Wallet } from "./types";
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -105,6 +105,19 @@ export const api = {
   quant: (symbol: string) => req<QuantStats>(`/api/quant/${symbol}`),
   fundamentals: (symbol: string) => req<Record<string, any>>(`/api/fundamentals/${symbol}`),
   screens: () => req<{ prebuilt: { key: string; label: string; desc: string; expr: string }[] }>("/api/screens"),
+  analytics: (days = 90) => req<Analytics>(`/api/analytics?days=${days}`),
+  strategies: () => req<{ strategies: StrategyInfo[] }>("/api/strategies"),
+  toggleStrategy: (key: string, enabled: boolean) =>
+    req<{ ok: boolean; reply: string }>(`/api/strategies/${encodeURIComponent(key)}/toggle`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
+  telegramStatus: () =>
+    req<{ configured: boolean; muted: boolean; last_sent_at: string | null; last_error: string | null }>(
+      "/api/telegram/status",
+    ),
+  reviewTrade: (id: number, body: { notes?: string; tags?: string; rating?: number }) =>
+    req<{ ok: boolean }>(`/api/journal/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   runScreen: (body: { group?: string; key?: string; expr?: string }) =>
     req<{ expr: string; scanned: number; matches: any[]; synthetic: boolean }>("/api/screen", {
       method: "POST",
