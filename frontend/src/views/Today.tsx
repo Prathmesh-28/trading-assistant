@@ -3,6 +3,7 @@ import type { MarketStatus, Snapshot } from "../types";
 import { IdeaCard } from "../components/IdeaCard";
 import { RiskStrip } from "../components/RiskStrip";
 import { StatStrip } from "../components/StatStrip";
+import { EmergencyButton } from "../components/EmergencyButton";
 import { IndexStrip } from "../components/IndexStrip";
 import { PositionRow } from "../components/PositionRow";
 import { WalletCard } from "../components/WalletCard";
@@ -83,9 +84,12 @@ export function Today({ snapshot, market, onBrowse }: { snapshot: Snapshot; mark
 
       {positions.length > 0 && (
         <section className="today-block">
-          <h2 className="today-heading">
-            👁 Being watched for you <span className="count-pill">{positions.length}</span>
-          </h2>
+          <div className="today-heading-row">
+            <h2 className="today-heading">
+              👁 Being watched for you <span className="count-pill">{positions.length}</span>
+            </h2>
+            <EmergencyButton openCount={positions.length} />
+          </div>
           {positions.map((idea) => (
             <PositionRow key={idea.idea_id} idea={idea} execute={exec} />
           ))}

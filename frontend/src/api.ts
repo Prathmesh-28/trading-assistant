@@ -1,4 +1,4 @@
-import type { Analytics, StrategyInfo, BacktestJob, ChartData, HistoryRow, IndexQuote, MarketData, QuantStats, Snapshot, Suggestion, TunableSettings, Wallet } from "./types";
+import type { Analytics, StrategyInfo, TaxReport, BacktestJob, ChartData, HistoryRow, IndexQuote, MarketData, QuantStats, Snapshot, Suggestion, TunableSettings, Wallet } from "./types";
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -112,6 +112,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ enabled }),
     }),
+  taxReport: (fy = "") => req<TaxReport>(`/api/tax/report${fy ? `?fy=${fy}` : ""}`),
+  flattenAll: () => req<{ ok: boolean; reply: string }>("/api/positions/flatten", { method: "POST" }),
+  configHealth: () => req<{ warnings: string[] }>("/api/config/health"),
   telegramStatus: () =>
     req<{ configured: boolean; muted: boolean; last_sent_at: string | null; last_error: string | null }>(
       "/api/telegram/status",
@@ -149,6 +152,34 @@ export async function downloadHistoryCsv(): Promise<void> {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "trading-journal.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+export async function downloadTaxCsv(fy = ""): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}/api/tax/report.csv${fy ? `?fy=${fy}` : ""}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`csv ${res.status}`);
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `capital-gains-${fy || "all"}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+export async function downloadJournalBackup(): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}/api/journal/backup.db`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`backup ${res.status}`);
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "journal-backup.db";
   a.click();
   URL.revokeObjectURL(a.href);
 }

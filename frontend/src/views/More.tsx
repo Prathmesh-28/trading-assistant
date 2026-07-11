@@ -4,9 +4,11 @@ import { BacktestPanel } from "../components/BacktestPanel";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { StrategyPanel } from "../components/StrategyPanel";
 import { TelegramPanel } from "../components/TelegramPanel";
+import { TaxReport } from "../components/TaxReport";
+import { ConfigHealth } from "../components/ConfigHealth";
 import type { Snapshot } from "../types";
 
-type Section = "menu" | "settings" | "backtest" | "help" | "strategies" | "telegram";
+type Section = "menu" | "settings" | "backtest" | "help" | "strategies" | "telegram" | "reports";
 
 /** Everything that isn't daily trading lives here, one level deep. */
 export function More({
@@ -33,6 +35,12 @@ export function More({
         {section === "help" && <HowItWorks />}
         {section === "strategies" && <StrategyPanel />}
         {section === "telegram" && <TelegramPanel />}
+        {section === "reports" && (
+          <>
+            <ConfigHealth />
+            <TaxReport />
+          </>
+        )}
       </div>
     );
   }
@@ -46,6 +54,10 @@ export function More({
       <button className="more-item" onClick={() => setSection("telegram")}>
         <span>📨 Phone alerts</span>
         <span className="more-hint">Telegram health & the mute switch</span>
+      </button>
+      <button className="more-item" onClick={() => setSection("reports")}>
+        <span>🧾 Tax & reports</span>
+        <span className="more-hint">Capital gains by FY, CSV export, DB backup</span>
       </button>
       <button className="more-item" onClick={() => setSection("help")}>
         <span>❓ How this works</span>

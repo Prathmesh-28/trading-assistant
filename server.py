@@ -40,6 +40,12 @@ log = logging.getLogger("server")
 bus = EventBus()
 settings = Settings()
 engine = RecommendEngine(settings, event_bus=bus)
+
+# Boot-time config sanity: log every warning; ping the owner about the risky
+# ones (default password) so a misconfigured deploy is loud, not silent.
+_config_warnings = settings.validate()
+for _w in _config_warnings:
+    log.warning("config check: %s", _w)
 _engine_task: asyncio.Task | None = None
 
 
@@ -167,7 +173,11 @@ async def login(body: LoginBody, request: Request):
     if len(recent) >= _LOCKOUT_ATTEMPTS:
         raise HTTPException(429, "too many attempts — try again in a few minutes")
     user_ok = hmac.compare_digest(body.username.strip(), settings.auth_username)
-    pass_ok = hmac.compare_digest(body.password, settings.auth_password)
+    if settings.auth_password_hash:
+        supplied = hashlib.sha256(body.password.encode()).hexdigest()
+        pass_ok = hmac.compare_digest(supplied, settings.auth_password_hash.strip().lower())
+    else:
+        pass_ok = hmac.compare_digest(body.password, settings.auth_password)
     if not (user_ok and pass_ok):
         recent.append(now)
         _failed_logins[ip] = recent
@@ -607,6 +617,58 @@ async def telegram_status():
         "last_sent_at": Notifier.last_sent_at or None,
         "last_error": Notifier.last_error or None,
     }
+
+
+@app.post("/api/positions/flatten")
+async def flatten_all_positions():
+    """Emergency: exit every open position and pause new ideas."""
+    reply = await engine.flatten_all()
+    return {"ok": True, "reply": reply}
+
+
+@app.get("/api/tax/report")
+async def tax_report(fy: str = ""):
+    """Capital-gains working sheet: per-FY STCG/LTCG + intraday, net of costs."""
+    import tax
+    rows = engine.journal.history(5000)
+    report = tax.compute(rows, engine.s.slippage_pct)
+    if fy:
+        report = {**report,
+                  "years": [y for y in report["years"] if y["fy"] == fy],
+                  "trades": [t for t in report["trades"] if t["fy"] == fy]}
+    return report
+
+
+@app.get("/api/tax/report.csv")
+async def tax_report_csv(fy: str = ""):
+    import tax
+    from fastapi.responses import PlainTextResponse
+    rows = engine.journal.history(5000)
+    report = tax.compute(rows, engine.s.slippage_pct)
+    if fy:
+        report["trades"] = [t for t in report["trades"] if t["fy"] == fy]
+    fn = f"capital-gains-{fy or 'all'}.csv"
+    return PlainTextResponse(tax.to_csv(report),
+                             headers={"Content-Disposition": f'attachment; filename="{fn}"'})
+
+
+@app.get("/api/config/health")
+async def config_health():
+    """Boot config warnings — surfaced in the dashboard's admin view."""
+    return {"warnings": engine.s.validate()}
+
+
+@app.get("/api/journal/backup.db")
+async def journal_backup():
+    """Download the SQLite journal — Render's disk is ephemeral, so this is the
+    manual backup path (auth-gated by the middleware)."""
+    from fastapi.responses import FileResponse
+    path = engine.s.journal_path
+    if not os.path.exists(path):
+        raise HTTPException(404, "journal file not found")
+    stamp = datetime.now(IST).strftime("%Y%m%d-%H%M")
+    return FileResponse(path, media_type="application/octet-stream",
+                        filename=f"journal-backup-{stamp}.db")
 
 
 # ------------------------------------------------------------------ screener

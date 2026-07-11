@@ -285,3 +285,28 @@ export interface StrategyInfo {
   win_rate_pct: number | null;
   pnl: number;
 }
+
+export interface TaxBucket {
+  trades: number;
+  gross: number;
+  charges: number;
+  net: number;
+}
+export interface TaxYear {
+  fy: string;
+  stcg: TaxBucket;
+  ltcg: TaxBucket;
+  intraday: TaxBucket;
+  total_charges: number;
+  total_net: number;
+}
+export interface TaxTrade {
+  symbol: string; fy: string; category: string;
+  buy_date: string; sell_date: string; held_days: number; qty: number;
+  buy_price: number; sell_price: number;
+  gross_pnl: number; charges: number; net_pnl: number;
+}
+export interface TaxReport {
+  years: TaxYear[];
+  trades: TaxTrade[];
+}

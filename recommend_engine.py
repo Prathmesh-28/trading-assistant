@@ -204,6 +204,42 @@ class RecommendEngine:
             bits.append(f"fundamentals {fs}/100" + (f" ({', '.join(extra)})" if extra else ""))
         return " · ".join(bits)
 
+    def _ideas_today(self) -> int:
+        """Count fresh ideas emitted today (pending + already-acted-on)."""
+        today = datetime.now(IST).date().isoformat()
+        n = sum(1 for rec, _ in self.pending.values()
+                if rec.created_at.date().isoformat() == today)
+        try:
+            n += sum(1 for r in self.journal.history(200)
+                     if (r.get("created_at") or "").startswith(today)
+                     and r.get("status") in ("ACTIVE", "CLOSED", "SKIPPED"))
+        except Exception:  # noqa: BLE001
+            pass
+        return n
+
+    async def flatten_all(self) -> str:
+        """Emergency: exit every open position at once and pause new ideas.
+        Fails soft per-symbol so one bad exit can't strand the rest."""
+        syms = list(self.active.keys())
+        if not syms:
+            self.paused = True
+            return "No open positions. New ideas paused."
+        done, failed = [], []
+        for sym in syms:
+            try:
+                await self.execute_exit(sym)
+                done.append(sym)
+            except Exception as e:  # noqa: BLE001
+                failed.append(f"{sym} ({str(e)[:30]})")
+        self.paused = True
+        self._emit_snapshot()
+        msg = f"🛑 FLATTEN: exited {len(done)} position(s)"
+        if failed:
+            msg += f"; FAILED: {', '.join(failed)} — check the app"
+        msg += ". New ideas paused."
+        await self._alert("danger", "", msg, msg)
+        return msg
+
     def _day_pnl(self) -> float:
         realized = self.journal.day_stats().get("realised_pnl", 0.0)
         open_pnl = sum(p.rec.pnl(self.last_ltp.get(s, p.rec.fill_price or p.rec.entry))
@@ -544,6 +580,7 @@ class RecommendEngine:
         "max_open_positions": int,
         "max_portfolio_risk_pct": float,
         "daily_loss_limit_pct": float,
+        "max_ideas_per_day": int,
         "alerts_muted": bool,
         "disabled_strategies": list,
         "fundamental_gate_enabled": bool,
@@ -607,6 +644,7 @@ class RecommendEngine:
                     "max_open_positions": (1, 25),
                     "max_portfolio_risk_pct": (0.5, 25.0),
                     "daily_loss_limit_pct": (0.5, 20.0),
+                    "max_ideas_per_day": (0, 100),
                     "min_fundamental_score": (0.0, 100.0),
                     "max_fundamental_de": (10.0, 1000.0),
                 }[key]
@@ -697,6 +735,10 @@ class RecommendEngine:
         muted = [k for k in self.s.disabled_strategies if k in sig.reason.lower()]
         if muted:
             log.info("%s idea skipped — strategy muted (%s)", sig.symbol, muted[0])
+            return
+        cap = self.s.max_ideas_per_day
+        if cap and self._ideas_today() >= cap:
+            log.info("%s idea skipped — daily cap of %d ideas reached", sig.symbol, cap)
             return
         qty = suggested_qty(sig.entry, sig.stop, self.s, capital=self.equity(),
                             risk_pct=self.effective_risk_pct())
@@ -938,10 +980,12 @@ class RecommendEngine:
     # Commands that change state — the ones that must push a fresh snapshot to
     # every connected dashboard client (and, symmetrically, are reachable from
     # either Telegram or the web UI so both surfaces always agree).
-    _MUTATING = {"pause", "resume", "bought", "skip", "sold", "watch",
+    _MUTATING = {"pause", "resume", "bought", "skip", "sold", "watch", "flatten",
                  "execute", "exit", "deposit", "withdraw", "arm", "disarm"}
 
     async def handle_command(self, cmd: str, args: list[str]) -> str:
+        if cmd == "flatten":
+            return await self.flatten_all()
         reply = await self._dispatch_command(cmd, args)
         if cmd in self._MUTATING:
             self._emit_snapshot()

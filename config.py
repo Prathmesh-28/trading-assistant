@@ -56,6 +56,10 @@ class Settings:
     # Dashboard login (web UI + API). Override in production via env.
     auth_username: str = field(default_factory=lambda: _s("AUTH_USERNAME", "prathmesh"))
     auth_password: str = field(default_factory=lambda: _s("AUTH_PASSWORD", "trade@2026"))
+    # Optional: sha256 hex of the password. When set, it wins over the
+    # plaintext field so the real secret never sits in env. Generate with:
+    #   python -c "import hashlib;print(hashlib.sha256(b'yourpass').hexdigest())"
+    auth_password_hash: str = field(default_factory=lambda: _s("AUTH_PASSWORD_HASH"))
 
     # Universe + risk
     watchlist: list = field(
@@ -73,6 +77,10 @@ class Settings:
     # exit, or per manual ticket. Recommend-only remains the default. In
     # synthetic/demo mode orders are always paper-filled regardless.
     execute_enabled: bool = field(default_factory=lambda: _b("EXECUTE_ENABLED", False))
+
+    # Cap on how many fresh ideas the engine emits per calendar day (0 = no
+    # cap). Guards against overtrading on a busy signal day.
+    max_ideas_per_day: int = field(default_factory=lambda: _i("MAX_IDEAS_PER_DAY", 0))
 
     # Circuit breaker: pause NEW ideas for the day once realized+open loss
     # exceeds this % of equity (monitoring of open positions continues).
@@ -123,6 +131,24 @@ class Settings:
 
     # Execute mode only
     live: bool = field(default_factory=lambda: _b("LIVE", False))
+
+    def validate(self) -> list:
+        """Boot-time sanity check. Returns a list of human-readable warnings
+        (empty = all good); never raises — the app must still start degraded."""
+        warns = []
+        if self.auth_password == "trade@2026" and not self.auth_password_hash:
+            warns.append("AUTH_PASSWORD is the shipped default — change it in production")
+        if not (0.05 <= self.risk_per_trade_pct <= 5.0):
+            warns.append(f"risk_per_trade_pct={self.risk_per_trade_pct} outside 0.05-5.0")
+        if self.capital <= 0:
+            warns.append(f"capital={self.capital} must be positive")
+        if self.max_open_positions < 1:
+            warns.append("max_open_positions < 1 blocks all trading")
+        if self.execute_enabled and not self.has_groww:
+            warns.append("execute_enabled but no Groww creds — orders will fail")
+        if not self.has_telegram:
+            warns.append("no Telegram creds — phone alerts go to console only")
+        return warns
 
     @property
     def has_groww(self) -> bool:

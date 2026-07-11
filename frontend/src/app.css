@@ -2241,3 +2241,26 @@
   .today-main { grid-column: 1; grid-row: 2; }
   .today-rail { grid-column: 2; grid-row: 2; }
 }
+
+/* =================== tax reports, emergency, config health =================== */
+.tax-report { display: flex; flex-direction: column; gap: 14px; }
+.tax-year { }
+.tax-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.tax-head h3 { font-size: 15px; margin: 0; }
+.tax-line { display: grid; grid-template-columns: 1.4fr auto auto auto; gap: 12px; align-items: baseline; padding: 6px 0; font-size: 13px; border-bottom: 1px solid var(--gridline); }
+.tax-cat { font-weight: 500; }
+.tax-total { display: flex; justify-content: space-between; align-items: baseline; padding-top: 10px; margin-top: 4px; font-size: 14px; }
+.tax-total span { color: var(--text-secondary); }
+.tax-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn-ghost { background: var(--surface-1); border: 1px solid var(--border-strong); color: var(--text-secondary); border-radius: 8px; padding: 9px 14px; font-size: 13px; }
+.btn-ghost:hover { color: var(--text-primary); border-color: var(--text-muted); }
+
+.today-heading-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.emergency-btn { background: var(--critical-dim); color: var(--critical); border: 1px solid transparent; border-radius: 8px; padding: 7px 12px; font-size: 12.5px; font-weight: 600; }
+.emergency-btn:hover { background: var(--critical); color: #fff; }
+.emergency-confirm { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-secondary); flex-wrap: wrap; }
+.btn-danger { background: var(--critical); color: #fff; border: 0; border-radius: 8px; padding: 7px 12px; font-size: 12.5px; font-weight: 600; }
+
+.cfg-ok { font-size: 12.5px; margin: 0 0 14px; }
+.cfg-warns { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.cfg-warn { margin: 0; font-size: 12.5px; color: var(--warning); background: var(--warning-dim); border-radius: 8px; padding: 8px 12px; }
